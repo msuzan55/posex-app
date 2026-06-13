@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../config/api_config.dart';
-import 'home_screen.dart';
+import '../providers/auth_provider.dart';
+import 'login_screen.dart';
+import 'products_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -14,13 +16,20 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
-    Future<void>.delayed(const Duration(milliseconds: 900), _goHome);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrap());
   }
 
-  void _goHome() {
+  Future<void> _bootstrap() async {
+    final auth = context.read<AuthProvider>();
+    await auth.bootstrap();
     if (!mounted) return;
+
+    final next = auth.status == AuthStatus.authenticated
+        ? const ProductsScreen()
+        : const LoginScreen();
+
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => const HomeScreen()),
+      MaterialPageRoute<void>(builder: (_) => next),
     );
   }
 
@@ -72,13 +81,6 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
               const SizedBox(height: 48),
               const CircularProgressIndicator(color: Colors.white),
-              const SizedBox(height: 16),
-              Text(
-                ApiConfig.productionBaseUrl,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: Colors.white.withValues(alpha: 0.85),
-                ),
-              ),
             ],
           ),
         ),

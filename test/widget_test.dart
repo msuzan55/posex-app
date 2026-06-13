@@ -8,10 +8,5 @@ void main() {
 
     expect(find.text('PosEx'), findsOneWidget);
     expect(find.text('POS for Sri Lankan retail'), findsOneWidget);
-
-    await tester.pump(const Duration(milliseconds: 900));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Welcome'), findsOneWidget);
   });
 }

@@ -1,23 +1,24 @@
-/// PosEx API configuration — mirrors posex_test web defaults.
+/// PosEx API configuration — matches posex web app endpoints.
 class ApiConfig {
   ApiConfig._();
 
   /// Production PosEx API (nginx proxies `/api` on same host).
   static const String productionBaseUrl = 'https://posex.lk';
 
-  /// Staging / dev API when testing against posex.lk/test.
-  static const String stagingBaseUrl = 'https://posex.lk';
-
-  /// Default for local emulator pointing at posex-docker-stack backend.
+  /// Android emulator → posex-docker-stack backend on host.
   static const String localBaseUrl = 'http://10.0.2.2:18000';
 
-  static const String authLoginPath = '/api/v2/auth/login';
-  static const String syncChangesPath = '/api/v2/sync/changes';
-  static const String syncPushPath = '/api/v2/sync/push';
+  static const String authLogin = '/api/v1/auth/login';
+  static const String authMe = '/api/v1/auth/me';
+  static const String productsList = '/api/v1/products/';
 
-  static String resolveBaseUrl({bool useStaging = false, bool useLocal = false}) {
+  static String resolveBaseUrl({bool useLocal = false}) {
     if (useLocal) return localBaseUrl;
-    if (useStaging) return stagingBaseUrl;
     return productionBaseUrl;
+  }
+
+  static String productUploadPrefix(String baseUrl) {
+    final base = baseUrl.replaceAll(RegExp(r'/$'), '');
+    return '$base/upload/products/';
   }
 }

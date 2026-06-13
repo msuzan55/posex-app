@@ -1,12 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:posex_app/app.dart';
+import 'package:posex_app/main.dart';
 
 void main() {
-  testWidgets('PosEx app shows splash branding', (WidgetTester tester) async {
-    await tester.pumpWidget(const PosexApp());
-    await tester.pump();
-
-    expect(find.text('PosEx'), findsOneWidget);
-    expect(find.text('POS for Sri Lankan retail'), findsOneWidget);
+  test('PosEx app targets the staging web app URL', () {
+    expect(kPosexUrl, 'https://posex.lk/test/');
   });
 }

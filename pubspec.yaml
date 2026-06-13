@@ -15,6 +15,9 @@ dependencies:
   webview_flutter_android: ^4.3.0
   permission_handler: ^11.3.1
   image_picker: ^1.1.2
+  shelf: ^1.4.1
+  shared_preferences: ^2.3.3
+  print_bluetooth_thermal: ^1.1.0
 
 dev_dependencies:
   flutter_test:

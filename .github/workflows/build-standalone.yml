@@ -102,6 +102,7 @@ jobs:
       - name: Build release Windows app
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+          CL: "/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS"
         run: |
           flutter build windows --release `
             --build-name="1.0.${{ github.run_number }}" `

@@ -34,6 +34,12 @@ class PrinterManager extends ChangeNotifier {
 
   bool isOnline(String id) => _online[id] == true;
 
+  /// Printers that passed the last reachability probe.
+  int get connectedPrinterCount =>
+      _online.values.where((online) => online).length;
+
+  bool get hasConnectedPrinter => connectedPrinterCount > 0;
+
   PrinterConfig? _byId(String? id) {
     if (id == null) return null;
     for (final p in _printers) {

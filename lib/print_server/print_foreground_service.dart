@@ -8,10 +8,13 @@ class PrintForegroundService {
 
   static const _channel = MethodChannel('lk.posex.posex_app/print_service');
 
-  static Future<void> start() async {
+  static Future<void> start({int connectedCount = 0}) async {
     if (!Platform.isAndroid) return;
+    if (connectedCount <= 0) return;
     try {
-      await _channel.invokeMethod<void>('startForeground');
+      await _channel.invokeMethod<void>('startForeground', {
+        'connectedCount': connectedCount,
+      });
     } catch (_) {
       // Non-fatal — print server still runs while app is foregrounded.
     }

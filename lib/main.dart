@@ -75,6 +75,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   String? _bootstrapError;
   Timer? _fabTimer;
   Timer? _probeTimer;
+  VoidCallback? _printerManagerListener;
   UpdateInfo? _update;
   UpdateDownloadState _updateState = UpdateDownloadState.idle;
   double _downloadProgress = 0;
@@ -97,17 +98,47 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     WidgetsBinding.instance.removeObserver(this);
     _fabTimer?.cancel();
     _probeTimer?.cancel();
-    // Keep print server + foreground service running for remote printing.
+    final listener = _printerManagerListener;
+    final manager = _printerManager;
+    if (listener != null && manager != null) {
+      manager.removeListener(listener);
+    }
+    // Keep print server running for remote printing when service is active.
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Re-assert foreground service when app goes to background.
+    // Keep background remote printing alive only while printers are connected.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
-      PrintForegroundService.start();
+      unawaited(_syncPrintForegroundService());
     }
+  }
+
+  Future<void> _syncPrintForegroundService() async {
+    final manager = _printerManager;
+    if (manager == null) return;
+
+    if (!manager.hasConnectedPrinter) {
+      await PrintForegroundService.stop();
+      return;
+    }
+
+    final notif = await Permission.notification.status;
+    if (!notif.isGranted) return;
+
+    await PrintForegroundService.start(
+      connectedCount: manager.connectedPrinterCount,
+    );
+  }
+
+  void _attachPrinterManagerListener(PrinterManager manager) {
+    _printerManagerListener ??= () {
+      unawaited(_syncPrintForegroundService());
+    };
+    manager.removeListener(_printerManagerListener!);
+    manager.addListener(_printerManagerListener!);
   }
 
   Future<void> _bootstrap() async {
@@ -129,16 +160,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       }
 
       await manager.init();
+      _attachPrinterManagerListener(manager);
 
-      // Notification permission before foreground service (Android 13+).
-      final notif = await Permission.notification.status;
-      if (notif.isGranted) {
-        await PrintForegroundService.start();
-      }
-
-      _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-        manager.reconnectAll();
+      _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
+        await manager.reconnectAll();
+        await _syncPrintForegroundService();
       });
+
+      await _syncPrintForegroundService();
     } catch (e, st) {
       debugPrint('[PosEx] bootstrap error: $e\n$st');
       _bootstrapError ??= 'Startup error: $e';
@@ -397,6 +426,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -516,23 +546,27 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
               if (_showPrintFab)
                 Positioned(
                   right: 12,
-                  bottom: 12,
-                  child: GestureDetector(
-                    onTap: _openPrintPanel,
-                    child: Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF97316),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.4),
-                            blurRadius: 8,
-                          ),
-                        ],
+                  bottom: bottomInset + 12,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _openPrintPanel,
+                      borderRadius: BorderRadius.circular(24),
+                      child: Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF97316),
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.4),
+                              blurRadius: 8,
+                            ),
+                          ],
+                        ),
+                        child: const Icon(Icons.print, color: Colors.white),
                       ),
-                      child: const Icon(Icons.print, color: Colors.white),
                     ),
                   ),
                 ),

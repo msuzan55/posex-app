@@ -76,30 +76,31 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
             children: [
               _statusCard(),
               const SizedBox(height: 16),
-              Row(
+              const Text('Printers',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                alignment: WrapAlignment.start,
                 children: [
-                  const Text('Printers',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700)),
-                  const Spacer(),
-                  TextButton.icon(
+                  _addPrinterChip(
+                    icon: Icons.lan,
+                    label: 'Network',
                     onPressed: _addNetworkDialog,
-                    icon: const Icon(Icons.lan, color: _accent, size: 18),
-                    label: const Text('Network',
-                        style: TextStyle(color: _accent)),
                   ),
-                  TextButton.icon(
+                  _addPrinterChip(
+                    icon: Icons.bluetooth,
+                    label: 'Bluetooth',
                     onPressed: _addBluetoothDialog,
-                    icon: const Icon(Icons.bluetooth, color: _accent, size: 18),
-                    label: const Text('Bluetooth',
-                        style: TextStyle(color: _accent)),
                   ),
-                  TextButton.icon(
+                  _addPrinterChip(
+                    icon: Icons.usb,
+                    label: 'USB',
                     onPressed: _addUsbDialog,
-                    icon: const Icon(Icons.usb, color: _accent, size: 18),
-                    label: const Text('USB', style: TextStyle(color: _accent)),
                   ),
                 ],
               ),
@@ -167,26 +168,39 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(online ? Icons.circle : Icons.circle_outlined,
-                  size: 12, color: online ? Colors.green : Colors.white38),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(online ? Icons.circle : Icons.circle_outlined,
+                    size: 12, color: online ? Colors.green : Colors.white38),
+              ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(p.name,
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w600)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(p.name,
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${p.transport.label} · ${p.address}',
+                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                  ],
+                ),
               ),
-              Text(p.transport.label,
-                  style: const TextStyle(color: Colors.white54, fontSize: 11)),
               IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 icon: const Icon(Icons.delete_outline,
                     color: Colors.redAccent, size: 20),
                 onPressed: () => _m.removePrinter(p.id),
               ),
             ],
           ),
-          Text(p.address,
-              style: const TextStyle(color: Colors.white38, fontSize: 12)),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
@@ -365,6 +379,24 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _addPrinterChip({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: _accent,
+        side: BorderSide(color: _accent.withValues(alpha: 0.45)),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        visualDensity: VisualDensity.compact,
+      ),
+      icon: Icon(icon, size: 18),
+      label: Text(label),
     );
   }
 

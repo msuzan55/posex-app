@@ -25,8 +25,14 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "startForeground" -> {
                         try {
-                            startPrintForegroundService()
-                            result.success(true)
+                            val count = call.argument<Int>("connectedCount") ?: 0
+                            if (count <= 0) {
+                                stopService(Intent(this, PrintForegroundService::class.java))
+                                result.success(false)
+                            } else {
+                                startPrintForegroundService(count)
+                                result.success(true)
+                            }
                         } catch (e: Exception) {
                             result.success(false)
                         }
@@ -123,8 +129,10 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
-    private fun startPrintForegroundService() {
-        val intent = Intent(this, PrintForegroundService::class.java)
+    private fun startPrintForegroundService(connectedCount: Int) {
+        val intent = Intent(this, PrintForegroundService::class.java).apply {
+            putExtra(PrintForegroundService.EXTRA_CONNECTED_COUNT, connectedCount)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {

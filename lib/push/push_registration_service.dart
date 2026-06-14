@@ -56,7 +56,7 @@ class PushRegistrationService {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
-      const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const androidInit = AndroidInitializationSettings('@drawable/ic_stat_print');
       await _localNotifications.initialize(
         const InitializationSettings(android: androidInit),
         onDidReceiveNotificationResponse: (_) {},
@@ -225,6 +225,7 @@ class PushRegistrationService {
       'PosEx notifications',
       importance: Importance.high,
       priority: Priority.high,
+      icon: '@drawable/ic_stat_print',
     );
     await _localNotifications.show(
       message.hashCode,

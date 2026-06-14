@@ -15,6 +15,7 @@ class PrintForegroundService : Service() {
     companion object {
         const val CHANNEL_ID = "posex_print_server"
         const val NOTIFICATION_ID = 9753
+        const val EXTRA_CONNECTED_COUNT = "connected_count"
     }
 
     override fun onCreate() {
@@ -23,22 +24,34 @@ class PrintForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification()
+        val connected = intent?.getIntExtra(EXTRA_CONNECTED_COUNT, 0) ?: 0
+        if (connected <= 0) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        val notification = buildNotification(connected)
         startForeground(NOTIFICATION_ID, notification)
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun buildNotification(): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun buildNotification(connectedCount: Int): Notification {
+        val printerLabel = if (connectedCount == 1) {
+            "1 printer connected"
+        } else {
+            "$connectedCount printers connected"
+        }
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("PosEx Print Server")
-            .setContentText("Remote printing active")
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentText("Remote printing active — $printerLabel")
+            .setSmallIcon(R.drawable.ic_stat_print)
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

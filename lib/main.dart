@@ -270,12 +270,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         onMessageReceived: (JavaScriptMessage message) {
           final text = message.message;
           if (text.startsWith('auth:')) {
-            PushRegistrationService.setAuthToken(text.substring(5));
-            _reportNativePushStatus();
+            unawaited(() async {
+              await PushRegistrationService.setAuthToken(text.substring(5));
+              await _reportNativePushStatus();
+            }());
           } else if (text == 'push:enable') {
-            _enableNativePush();
+            unawaited(_enableNativePush());
           } else if (text == 'push:status') {
-            _reportNativePushStatus();
+            unawaited(_reportNativePushStatus());
           }
         },
       )
@@ -315,17 +317,27 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     try {
       await controller.runJavaScript('''
 (function(){
-  function send(){
+  function readToken(){
     try{
-      var t=localStorage.getItem('pos_token');
-      if(t) PosExNativeBridge.postMessage('auth:'+t);
+      var keys=['posex_test_token','posex_app_token','pos_token'];
+      for(var i=0;i<keys.length;i++){
+        var v=localStorage.getItem(keys[i]);
+        if(v&&String(v).trim()) return String(v).trim();
+      }
     }catch(e){}
+    return '';
+  }
+  function send(){
+    var t=readToken();
+    if(t) PosExNativeBridge.postMessage('auth:'+t);
   }
   send();
   if(!window.__posexAuthHook){
     window.__posexAuthHook=true;
     window.addEventListener('storage', function(e){
-      if(!e||e.key==='pos_token') send();
+      if(!e) return;
+      var k=e.key||'';
+      if(k.indexOf('token')>=0||k==='posex_test_token'||k==='posex_app_token') send();
     });
   }
 })();
@@ -334,17 +346,23 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   Future<void> _enableNativePush() async {
-    final enabled = await PushRegistrationService.enableFromUser();
-    await _reportNativePushStatus(enabled: enabled);
+    await _syncAuthTokenFromWebView();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await PushRegistrationService.enableFromUser();
+    await _reportNativePushStatus();
   }
 
-  Future<void> _reportNativePushStatus({bool? enabled}) async {
+  Future<void> _reportNativePushStatus() async {
     final controller = _controller;
     if (controller == null) return;
-    final ok = enabled ?? await PushRegistrationService.queryStatus();
+    final status = await PushRegistrationService.getStatus();
+    final err = status.error;
+    final errJs = err == null
+        ? 'null'
+        : '"${err.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"';
     try {
       await controller.runJavaScript(
-        'window.dispatchEvent(new CustomEvent("posexNativePushStatus",{detail:{enabled:${ok ? 'true' : 'false'},native:true}}));',
+        'window.dispatchEvent(new CustomEvent("posexNativePushStatus",{detail:{enabled:${status.enabled ? 'true' : 'false'},native:true,permissionGranted:${status.permissionGranted ? 'true' : 'false'},registered:${status.registeredWithServer ? 'true' : 'false'},hasFcmToken:${status.hasFcmToken ? 'true' : 'false'},error:$errJs}}));',
       );
     } catch (_) {}
   }

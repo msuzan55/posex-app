@@ -17,67 +17,93 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 }
 
+class NativePushStatus {
+  const NativePushStatus({
+    required this.enabled,
+    required this.permissionGranted,
+    required this.hasFcmToken,
+    required this.registeredWithServer,
+    this.error,
+  });
+
+  final bool enabled;
+  final bool permissionGranted;
+  final bool hasFcmToken;
+  final bool registeredWithServer;
+  final String? error;
+}
+
 /// Registers the device FCM token with the API (same notifications as PWA).
 class PushRegistrationService {
   PushRegistrationService._();
 
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
-  static bool _initialized = false;
+  static bool _firebaseReady = false;
   static String? _authToken;
   static bool _registeredWithServer = false;
+  static String? _lastError;
 
   static bool get isRegisteredWithServer => _registeredWithServer;
 
-  static Future<void> init() async {
-    if (_initialized) return;
-    _initialized = true;
-
+  static Future<bool> _ensureFirebase() async {
     if (DefaultFirebaseOptions.android.appId.contains('placeholder')) {
-      debugPrint('[Push] Firebase skipped — configure google-services / app id');
-      return;
+      _lastError = 'Firebase not configured in this build';
+      return false;
     }
-
+    if (_firebaseReady) return true;
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+      const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+      await _localNotifications.initialize(
+        const InitializationSettings(android: androidInit),
+        onDidReceiveNotificationResponse: (_) {},
+      );
+
+      FirebaseMessaging.onMessage.listen(_showForegroundNotification);
+      FirebaseMessaging.onMessageOpenedApp.listen((_) {});
+      FirebaseMessaging.instance.onTokenRefresh.listen(_registerToken);
+
+      _firebaseReady = true;
+      return true;
     } catch (e) {
-      debugPrint('[Push] Firebase init skipped: $e');
-      return;
+      _lastError = 'Firebase init failed: $e';
+      debugPrint('[Push] $_lastError');
+      return false;
     }
+  }
 
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    await _localNotifications.initialize(
-      const InitializationSettings(android: androidInit),
-      onDidReceiveNotificationResponse: (_) {},
-    );
-
+  static Future<void> init() async {
+    if (!await _ensureFirebase()) return;
     await FirebaseMessaging.instance.requestPermission(
       alert: true,
       badge: true,
       sound: true,
     );
-
-    FirebaseMessaging.onMessage.listen(_showForegroundNotification);
-    FirebaseMessaging.onMessageOpenedApp.listen((_) {});
-
     final token = await FirebaseMessaging.instance.getToken();
     if (token != null) await _registerToken(token);
-
-    FirebaseMessaging.instance.onTokenRefresh.listen(_registerToken);
   }
 
-  static void setAuthToken(String? token) {
+  static Future<void> setAuthToken(String? token) async {
     _authToken = (token != null && token.trim().isNotEmpty) ? token.trim() : null;
-    FirebaseMessaging.instance.getToken().then((t) {
-      if (t != null) _registerToken(t);
-    });
+    if (_authToken == null) {
+      _registeredWithServer = false;
+      return;
+    }
+    if (!await _ensureFirebase()) return;
+    final fcm = await FirebaseMessaging.instance.getToken();
+    if (fcm != null) await _registerToken(fcm);
   }
 
   static Future<void> _registerToken(String token) async {
     final auth = _authToken;
-    if (auth == null) return;
+    if (auth == null) {
+      _lastError = 'Log in to register push notifications';
+      _registeredWithServer = false;
+      return;
+    }
 
     final endpoint = '$_fcmEndpointPrefix$token';
     try {
@@ -95,39 +121,100 @@ class PushRegistrationService {
         }),
       );
       if (res.statusCode >= 400) {
+        _lastError = 'Server registration failed (${res.statusCode})';
         debugPrint('[Push] register failed: ${res.statusCode} ${res.body}');
         _registeredWithServer = false;
       } else {
+        _lastError = null;
         _registeredWithServer = true;
       }
     } catch (e) {
+      _lastError = 'Network error registering push';
       debugPrint('[Push] register error: $e');
       _registeredWithServer = false;
     }
   }
 
-  /// Called from WebView bridge when user taps Enable in Settings.
-  static Future<bool> enableFromUser() async {
-    await init();
+  static Future<bool> _permissionGranted() async {
     final settings = await FirebaseMessaging.instance.getNotificationSettings();
-    final granted = settings.authorizationStatus == AuthorizationStatus.authorized ||
+    return settings.authorizationStatus == AuthorizationStatus.authorized ||
         settings.authorizationStatus == AuthorizationStatus.provisional;
-    if (!granted) return false;
-    final token = await FirebaseMessaging.instance.getToken();
-    if (token != null) await _registerToken(token);
-    return _registeredWithServer || token != null;
   }
 
-  static Future<bool> queryStatus() async {
-    if (DefaultFirebaseOptions.android.appId.contains('placeholder')) return false;
-    try {
-      final settings = await FirebaseMessaging.instance.getNotificationSettings();
-      final granted = settings.authorizationStatus == AuthorizationStatus.authorized ||
-          settings.authorizationStatus == AuthorizationStatus.provisional;
-      return granted && (_registeredWithServer || (_authToken != null && await FirebaseMessaging.instance.getToken() != null));
-    } catch (_) {
-      return false;
+  /// Called from WebView bridge when user taps Enable in Settings.
+  static Future<NativePushStatus> enableFromUser() async {
+    if (!await _ensureFirebase()) {
+      return getStatus();
     }
+
+    var granted = await _permissionGranted();
+    if (!granted) {
+      final req = await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      granted = req.authorizationStatus == AuthorizationStatus.authorized ||
+          req.authorizationStatus == AuthorizationStatus.provisional;
+    }
+    if (!granted) {
+      _lastError = 'Notification permission not granted';
+      return getStatus();
+    }
+
+    if (_authToken == null) {
+      _lastError = 'Please log in first, then enable push again';
+    }
+
+    final token = await FirebaseMessaging.instance.getToken();
+    if (token != null) {
+      await _registerToken(token);
+    } else {
+      _lastError = 'Could not get FCM device token';
+    }
+
+    return getStatus();
+  }
+
+  static Future<NativePushStatus> getStatus() async {
+    if (DefaultFirebaseOptions.android.appId.contains('placeholder')) {
+      return const NativePushStatus(
+        enabled: false,
+        permissionGranted: false,
+        hasFcmToken: false,
+        registeredWithServer: false,
+        error: 'Firebase not configured',
+      );
+    }
+
+    if (!await _ensureFirebase()) {
+      return NativePushStatus(
+        enabled: false,
+        permissionGranted: false,
+        hasFcmToken: false,
+        registeredWithServer: false,
+        error: _lastError,
+      );
+    }
+
+    final granted = await _permissionGranted();
+    String? fcmToken;
+    try {
+      fcmToken = await FirebaseMessaging.instance.getToken();
+    } catch (_) {}
+
+    final hasToken = fcmToken != null && fcmToken.isNotEmpty;
+    if (granted && hasToken && _authToken == null && !_registeredWithServer) {
+      _lastError ??= 'Log in, then tap Enable again';
+    }
+
+    return NativePushStatus(
+      enabled: granted && hasToken && _registeredWithServer,
+      permissionGranted: granted,
+      hasFcmToken: hasToken,
+      registeredWithServer: _registeredWithServer,
+      error: _registeredWithServer ? null : _lastError,
+    );
   }
 
   static Future<void> _showForegroundNotification(RemoteMessage message) async {

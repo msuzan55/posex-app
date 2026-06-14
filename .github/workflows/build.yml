@@ -100,6 +100,8 @@ jobs:
         run: flutter pub get
 
       - name: Build release Windows app
+        env:
+          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           flutter build windows --release `
             --build-name="1.0.${{ github.run_number }}" `

@@ -1,5 +1,8 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
+# Firebase C++ SDK (firebase_core on Windows) still declares an old minimum;
+# GitHub Actions CMake 4.x rejects that unless this policy floor is set.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 project(posex_app LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// Cross-platform WebView wrapper via flutter_inappwebview.
 class PosexWebViewController {
@@ -10,22 +12,46 @@ class PosexWebViewController {
     required this.onBridgeMessage,
     required this.onPageFinished,
     required this.onLoadingChanged,
+    this.onLoadFailed,
   });
 
   final void Function(String message) onBridgeMessage;
   final VoidCallback onPageFinished;
   final void Function(bool loading) onLoadingChanged;
+  final void Function(String message)? onLoadFailed;
 
   InAppWebViewController? _controller;
+  WebViewEnvironment? _windowsEnv;
   bool _canGoBack = false;
   bool _ready = false;
+  bool _pageLoaded = false;
   String? _initialUrl;
 
   bool get isReady => _ready;
 
   Future<void> initialize(String initialUrl) async {
+    if (Platform.isWindows) {
+      await _ensureWindowsEnvironment();
+    }
     _initialUrl = initialUrl;
     _ready = true;
+  }
+
+  Future<void> _ensureWindowsEnvironment() async {
+    if (_windowsEnv != null) return;
+
+    final runtimeVersion = await WebViewEnvironment.getAvailableVersion();
+    if (runtimeVersion == null) {
+      throw StateError(
+        'WebView2 runtime not found. Install Microsoft Edge WebView2 Runtime.',
+      );
+    }
+
+    final dir = await getApplicationSupportDirectory();
+    final userData = '${dir.path}${Platform.pathSeparator}webview2';
+    _windowsEnv = await WebViewEnvironment.create(
+      settings: WebViewEnvironmentSettings(userDataFolder: userData),
+    );
   }
 
   Widget buildWidget() {
@@ -35,6 +61,7 @@ class PosexWebViewController {
       );
     }
     return InAppWebView(
+      webViewEnvironment: _windowsEnv,
       initialUrlRequest: URLRequest(url: WebUri(_initialUrl!)),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
@@ -42,6 +69,7 @@ class PosexWebViewController {
         allowsInlineMediaPlayback: true,
         supportZoom: false,
         transparentBackground: false,
+        disableDefaultErrorPage: false,
       ),
       initialUserScripts: UnmodifiableListView<UserScript>([
         UserScript(
@@ -65,15 +93,23 @@ window.PosExNativeBridge = window.PosExNativeBridge || {
           },
         );
       },
-      onLoadStart: (controller, url) => onLoadingChanged(true),
+      onLoadStart: (controller, url) {
+        _pageLoaded = false;
+        onLoadingChanged(true);
+      },
       onLoadStop: (controller, url) {
-        onLoadingChanged(false);
-        unawaited(_refreshCanGoBack());
-        onPageFinished();
+        _markPageLoaded();
+      },
+      onProgressChanged: (controller, progress) {
+        if (progress >= 100) {
+          _markPageLoaded();
+        }
       },
       onReceivedError: (controller, request, error) {
         if (request.isForMainFrame ?? false) {
           debugPrint('[WebView] ${error.type} ${error.description}');
+          onLoadFailed?.call(error.description);
+          onLoadingChanged(false);
         }
       },
       onPermissionRequest: (controller, request) async {
@@ -86,6 +122,14 @@ window.PosExNativeBridge = window.PosExNativeBridge || {
         unawaited(_refreshCanGoBack());
       },
     );
+  }
+
+  void _markPageLoaded() {
+    if (_pageLoaded) return;
+    _pageLoaded = true;
+    onLoadingChanged(false);
+    unawaited(_refreshCanGoBack());
+    onPageFinished();
   }
 
   Future<void> _refreshCanGoBack() async {
@@ -109,5 +153,6 @@ window.PosExNativeBridge = window.PosExNativeBridge || {
     _controller = null;
     _ready = false;
     _initialUrl = null;
+    _pageLoaded = false;
   }
 }

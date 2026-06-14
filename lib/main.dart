@@ -76,6 +76,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   String? _bootstrapError;
   Timer? _fabTimer;
   Timer? _probeTimer;
+  Timer? _webLoadTimeout;
   VoidCallback? _printerManagerListener;
   UpdateInfo? _update;
   UpdateDownloadState _updateState = UpdateDownloadState.idle;
@@ -99,6 +100,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     WidgetsBinding.instance.removeObserver(this);
     _fabTimer?.cancel();
     _probeTimer?.cancel();
+    _webLoadTimeout?.cancel();
     final listener = _printerManagerListener;
     final manager = _printerManager;
     if (listener != null && manager != null) {
@@ -314,14 +316,34 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     final webView = PosexWebViewController(
       onBridgeMessage: _onBridgeMessage,
       onPageFinished: () {
+        _webLoadTimeout?.cancel();
+        if (mounted) setState(() => _loading = false);
         _syncAuthTokenFromWebView();
         _reportNativePushStatus();
       },
       onLoadingChanged: (loading) {
         if (mounted) setState(() => _loading = loading);
       },
+      onLoadFailed: (message) {
+        _webLoadTimeout?.cancel();
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _bootstrapError ??= 'Web page failed to load: $message';
+          });
+        }
+      },
     );
     _webView = webView;
+    _webLoadTimeout?.cancel();
+    _webLoadTimeout = Timer(const Duration(seconds: 45), () {
+      if (!mounted || !_loading) return;
+      setState(() {
+        _loading = false;
+        _bootstrapError ??=
+            'Page load timed out. Check internet connection and try again.';
+      });
+    });
     unawaited(() async {
       try {
         await webView.initialize(kPosexUrl);
@@ -447,6 +469,23 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
               if (_loading)
                 const Center(
                   child: CircularProgressIndicator(color: Color(0xFFF97316)),
+                ),
+              if (_bootstrapError != null)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 16,
+                  child: Material(
+                    color: const Color(0xFFB91C1C),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(
+                        _bootstrapError!,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
                 ),
               // Update banner, top.
               if (_update != null)

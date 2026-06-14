@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_windows/webview_windows.dart' as win;
@@ -40,6 +41,22 @@ class PosexWebViewController {
   bool _canGoBack = false;
 
   final List<StreamSubscription<dynamic>> _subscriptions = [];
+
+  static bool _windowsEnvReady = false;
+
+  /// Persistent WebView2 profile so IndexedDB / localStorage survive restarts (offline sync).
+  static Future<void> _ensureWindowsWebViewEnvironment() async {
+    if (_windowsEnvReady) return;
+    final dir = await getApplicationSupportDirectory();
+    final userData = Directory('${dir.path}${Platform.pathSeparator}webview2');
+    if (!userData.existsSync()) {
+      await userData.create(recursive: true);
+    }
+    await win.WebviewController.initializeEnvironment(
+      userDataPath: userData.path,
+    );
+    _windowsEnvReady = true;
+  }
 
   bool get isReady {
     if (Platform.isWindows) {
@@ -92,6 +109,7 @@ class PosexWebViewController {
   }
 
   Future<void> _initWindows(String initialUrl) async {
+    await _ensureWindowsWebViewEnvironment();
     final controller = win.WebviewController();
     _windows = controller;
 

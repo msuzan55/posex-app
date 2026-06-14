@@ -111,11 +111,30 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_nudgeWebAppSync());
+    }
     // Keep background remote printing alive only while printers are connected.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       unawaited(_syncPrintForegroundService());
     }
+  }
+
+  /// Wake WebSocket + sync when the native shell returns to foreground (Windows has no Android foreground service).
+  Future<void> _nudgeWebAppSync() async {
+    final webView = _webView;
+    if (webView == null) return;
+    try {
+      await webView.runJavaScript('''
+(function(){
+  try{
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('focus'));
+  }catch(e){}
+})();
+''');
+    } catch (_) {}
   }
 
   Future<void> _syncPrintForegroundService() async {

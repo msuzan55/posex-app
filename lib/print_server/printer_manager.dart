@@ -144,6 +144,9 @@ class PrinterManager extends ChangeNotifier {
           await _sendNetwork(printer.address, bytes);
           break;
         case PrinterTransport.bluetooth:
+          if (!Platform.isAndroid) {
+            return 'Bluetooth printers are supported on Android only.';
+          }
           final ok = await _sendBluetooth(printer.address, bytes);
           if (!ok) return 'Bluetooth printer not reachable.';
           break;
@@ -213,6 +216,7 @@ class PrinterManager extends ChangeNotifier {
           s.destroy();
           return true;
         case PrinterTransport.bluetooth:
+          if (!Platform.isAndroid) return false;
           return _ensureBluetooth(printer.address);
         case PrinterTransport.usb:
           final vp = _vendorProduct(printer.address);

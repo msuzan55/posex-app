@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -47,6 +48,10 @@ class PushRegistrationService {
   static bool get isRegisteredWithServer => _registeredWithServer;
 
   static Future<bool> _ensureFirebase() async {
+    if (!Platform.isAndroid) {
+      _lastError = 'Push notifications are available on Android only';
+      return false;
+    }
     if (DefaultFirebaseOptions.android.appId.contains('placeholder')) {
       _lastError = 'Firebase not configured in this build';
       return false;
@@ -177,6 +182,15 @@ class PushRegistrationService {
   }
 
   static Future<NativePushStatus> getStatus() async {
+    if (!Platform.isAndroid) {
+      return const NativePushStatus(
+        enabled: false,
+        permissionGranted: false,
+        hasFcmToken: false,
+        registeredWithServer: false,
+        error: 'Push notifications are available on Android only',
+      );
+    }
     if (DefaultFirebaseOptions.android.appId.contains('placeholder')) {
       return const NativePushStatus(
         enabled: false,

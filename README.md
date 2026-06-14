@@ -1,58 +1,67 @@
-# PosEx Mobile App (Flutter)
+# PosEx App (Flutter)
 
-Native Android/iOS app for [PosEx](https://posex.lk).
+Native **Android** and **Windows** wrapper for [PosEx](https://posex.lk) — loads the web POS in a WebView with a built-in localhost print server on port **9753**.
 
-## Features (current)
+## Features
 
-- **Login** — `POST /api/v1/auth/login` (username/email + password), JWT stored locally
-- **Products** — `GET /api/v1/products/` scoped by `business_id` + `branch_id`
-- Search, pull-to-refresh, infinite scroll pagination
-- Product cards: image, name, item code, barcode, stock, price (LKR)
-
-## API
-
-Base URL: `https://posex.lk` (`lib/config/api_config.dart`)
-
-| Action | Endpoint |
-|--------|----------|
-| Login | `POST /api/v1/auth/login` |
-| Current user | `GET /api/v1/auth/me` |
-| Products list | `GET /api/v1/products/?business_id=&branch_id=&search=` |
-
-## Repos
-
-- **Standalone:** https://github.com/msuzan55/posex-app
-- **Monorepo copy:** `/var/www/suzanpro/posex-app`
-
-Publish monorepo → standalone:
-
-```bash
-/var/www/suzanpro/scripts/publish-posex-app-to-git.sh "your message"
-```
+| Feature | Android | Windows |
+|---------|---------|---------|
+| PosEx web app (`https://posex.lk/test/`) | Yes | Yes |
+| Local print server (`127.0.0.1:9753`) | Yes | Yes |
+| Network printers | Yes | Yes |
+| USB printers | Yes | Yes (best-effort) |
+| Bluetooth printers | Yes | No |
+| Remote printing (WebSocket → localhost) | Yes | Yes |
+| Native push (FCM) | Yes | No (use PWA push in browser) |
+| In-app OTA updates (GitHub Releases) | APK | ZIP → restart |
 
 ## Local dev
 
 ```bash
 cd posex-app
 flutter pub get
+
+# Android (device/emulator)
 flutter run
+
+# Windows (requires Windows + Visual Studio / WebView2)
+flutter run -d windows
+
 flutter test
+flutter analyze
 ```
+
+**Windows requirements:** [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually preinstalled on Windows 10/11).
 
 ## CI (GitHub Actions)
 
-`.github/workflows/build.yml` — analyze, test, build **Android APK** (no VPS build required).
+`.github/workflows/build-standalone.yml` builds on every push to `main`:
 
-Download APK from **Actions → Artifacts** after push.
+- **Android:** signed release APK
+- **Windows:** `posex-app-windows.zip` (portable release folder)
+
+Both are attached to the GitHub Release `build-{run_number}` for in-app updates.
+
+## Publish monorepo → standalone GitHub repo
+
+```bash
+/var/www/suzanpro/scripts/publish-posex-app-to-git.sh "your commit message"
+```
+
+Standalone repo: https://github.com/msuzan55/posex-app
 
 ## Project layout
 
 ```
 lib/
-├── config/api_config.dart
-├── models/
-├── services/          # auth + products API clients
-├── providers/         # auth state
-├── screens/           # splash, login, products
-└── widgets/           # product card
+├── main.dart                 # WebView shell, update banner, print FAB
+├── webview/                  # Android + Windows WebView bridge
+├── print_server/             # HTTP server, printer manager, panel UI
+├── push/                     # FCM registration (Android)
+├── update/                   # GitHub OTA (APK / Windows ZIP)
+└── platform/                 # Permissions & platform feature flags
 ```
+
+## API
+
+The embedded web app talks to `https://posex.lk`. The native bridge exposes `PosExNativeBridge` for auth token sync and push enable/status (Android).

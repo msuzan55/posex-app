@@ -1,12 +1,13 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import 'platform/app_permissions.dart';
 import 'print_server/device_info_service.dart';
 import 'print_server/print_foreground_service.dart';
 import 'print_server/print_http_server.dart';
@@ -15,6 +16,7 @@ import 'print_server/printer_manager.dart';
 import 'print_server/printer_store.dart';
 import 'push/push_registration_service.dart';
 import 'update/update_service.dart';
+import 'webview/posex_webview_controller.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
 /// embedded localhost print server (USB/Bluetooth/Network) on :9753.
@@ -64,7 +66,7 @@ class WebViewScreen extends StatefulWidget {
 }
 
 class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserver {
-  WebViewController? _controller;
+  PosexWebViewController? _webView;
   PrinterManager? _printerManager;
   PrintHttpServer? _printServer;
   final UpdateService _updateService = UpdateService();
@@ -103,7 +105,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     if (listener != null && manager != null) {
       manager.removeListener(listener);
     }
-    // Keep print server running for remote printing when service is active.
+    unawaited(_webView?.dispose());
     super.dispose();
   }
 
@@ -117,6 +119,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   Future<void> _syncPrintForegroundService() async {
+    if (!Platform.isAndroid) return;
     final manager = _printerManager;
     if (manager == null) return;
 
@@ -236,7 +239,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     if (_updateState == UpdateDownloadState.ready) {
       setState(() => _updateError = null);
       try {
-        await _updateService.installDownloadedApk();
+        await _updateService.installDownloadedUpdate();
       } on PlatformException catch (e) {
         if (mounted) {
           setState(() {
@@ -268,7 +271,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       case UpdateDownloadState.downloading:
         return 'Downloading update… ${(_downloadProgress * 100).toStringAsFixed(0)}%';
       case UpdateDownloadState.ready:
-        return 'Update ready — tap to install now';
+        return Platform.isWindows
+            ? 'Update ready — tap to restart now'
+            : 'Update ready — tap to install now';
       case UpdateDownloadState.failed:
         return _updateError == null || _updateError!.isEmpty
             ? 'Update failed — tap to retry'
@@ -280,71 +285,54 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   /// Camera + photo/storage so product-photo capture and gallery upload work.
   Future<void> _requestPermissions() async {
-    await [
-      Permission.camera,
-      Permission.photos,
-      Permission.storage,
-      Permission.notification,
-      Permission.bluetoothConnect,
-      Permission.bluetoothScan,
-    ].request();
+    await requestAppPermissions();
   }
 
   void _initWebView() {
-    final controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.black)
-      ..addJavaScriptChannel(
-        'PosExNativeBridge',
-        onMessageReceived: (JavaScriptMessage message) {
-          final text = message.message;
-          if (text.startsWith('auth:')) {
-            unawaited(() async {
-              await PushRegistrationService.setAuthToken(text.substring(5));
-              await _reportNativePushStatus();
-            }());
-          } else if (text == 'push:enable') {
-            unawaited(_enableNativePush());
-          } else if (text == 'push:status') {
-            unawaited(_reportNativePushStatus());
-          }
-        },
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (_) {
-            if (mounted) setState(() => _loading = true);
-          },
-          onPageFinished: (_) {
-            if (mounted) setState(() => _loading = false);
-            _syncAuthTokenFromWebView();
-            _reportNativePushStatus();
-          },
-          onWebResourceError: (error) {
-            debugPrint('[WebView] ${error.errorCode} ${error.description}');
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(kPosexUrl));
+    final webView = PosexWebViewController(
+      onBridgeMessage: _onBridgeMessage,
+      onPageFinished: () {
+        _syncAuthTokenFromWebView();
+        _reportNativePushStatus();
+      },
+      onLoadingChanged: (loading) {
+        if (mounted) setState(() => _loading = loading);
+      },
+      onShowFileSelector: _onShowFileSelector,
+    );
+    _webView = webView;
+    unawaited(() async {
+      try {
+        await webView.initialize(kPosexUrl);
+      } catch (e, st) {
+        debugPrint('[PosEx] WebView init error: $e\n$st');
+        _bootstrapError ??= 'WebView failed to start: $e';
+      } finally {
+        if (mounted) {
+          setState(() => _webReady = true);
+        }
+      }
+    }());
+  }
 
-    final platform = controller.platform;
-    if (platform is AndroidWebViewController) {
-      platform.setMediaPlaybackRequiresUserGesture(false);
-      platform.setMixedContentMode(MixedContentMode.alwaysAllow);
-      platform.setOnShowFileSelector(_onShowFileSelector);
-      platform.setOnPlatformPermissionRequest((request) => request.grant());
+  void _onBridgeMessage(String text) {
+    if (text.startsWith('auth:')) {
+      unawaited(() async {
+        await PushRegistrationService.setAuthToken(text.substring(5));
+        await _reportNativePushStatus();
+      }());
+    } else if (text == 'push:enable') {
+      unawaited(_enableNativePush());
+    } else if (text == 'push:status') {
+      unawaited(_reportNativePushStatus());
     }
-
-    _controller = controller;
-    _webReady = true;
-    if (mounted) setState(() {});
   }
 
   Future<void> _syncAuthTokenFromWebView() async {
-    final controller = _controller;
-    if (controller == null) return;
+    final webView = _webView;
+    if (webView == null) return;
     try {
-      await controller.runJavaScript('''
+      await webView.runJavaScript('''
 (function(){
   function readToken(){
     try{
@@ -382,15 +370,15 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   Future<void> _reportNativePushStatus() async {
-    final controller = _controller;
-    if (controller == null) return;
+    final webView = _webView;
+    if (webView == null) return;
     final status = await PushRegistrationService.getStatus();
     final err = status.error;
     final errJs = err == null
         ? 'null'
         : '"${err.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"';
     try {
-      await controller.runJavaScript(
+      await webView.runJavaScript(
         'window.dispatchEvent(new CustomEvent("posexNativePushStatus",{detail:{enabled:${status.enabled ? 'true' : 'false'},native:true,permissionGranted:${status.permissionGranted ? 'true' : 'false'},registered:${status.registeredWithServer ? 'true' : 'false'},hasFcmToken:${status.hasFcmToken ? 'true' : 'false'},error:$errJs}}));',
       );
     } catch (_) {}
@@ -425,14 +413,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
-    final controller = _controller;
+    final webView = _webView;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (controller != null && await controller.canGoBack()) {
-          controller.goBack();
+        if (webView != null && await webView.canGoBack()) {
+          await webView.goBack();
         } else {
           await SystemNavigator.pop();
         }
@@ -442,8 +430,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         body: SafeArea(
           child: Stack(
             children: [
-              if (controller != null && _webReady)
-                WebViewWidget(controller: controller)
+              if (webView != null && _webReady && webView.isReady)
+                webView.buildWidget()
               else
                 const Center(
                   child: CircularProgressIndicator(color: Color(0xFFF97316)),
@@ -475,7 +463,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                           children: [
                             Icon(
                               _updateState == UpdateDownloadState.ready
-                                  ? Icons.install_mobile
+                                  ? (Platform.isWindows
+                                      ? Icons.restart_alt
+                                      : Icons.install_mobile)
                                   : Icons.system_update,
                               color: Colors.white,
                               size: 20,

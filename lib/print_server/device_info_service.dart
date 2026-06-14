@@ -25,6 +25,10 @@ class DeviceInfoService {
       } else if (Platform.isIOS) {
         final info = await DeviceInfoPlugin().iosInfo;
         _deviceName = info.name.trim().isNotEmpty ? info.name : 'iOS device';
+      } else if (Platform.isWindows) {
+        final info = await DeviceInfoPlugin().windowsInfo;
+        final name = info.computerName.trim();
+        _deviceName = name.isNotEmpty ? name : 'Windows PC';
       } else {
         _deviceName = 'PosEx device';
       }

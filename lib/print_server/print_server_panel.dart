@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
+import '../platform/platform_features.dart';
 import 'print_http_server.dart';
 import 'print_models.dart';
 import 'printer_manager.dart';
@@ -92,24 +95,26 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                     label: 'Network',
                     onPressed: _addNetworkDialog,
                   ),
-                  _addPrinterChip(
-                    icon: Icons.bluetooth,
-                    label: 'Bluetooth',
-                    onPressed: _addBluetoothDialog,
-                  ),
-                  _addPrinterChip(
-                    icon: Icons.usb,
-                    label: 'USB',
-                    onPressed: _addUsbDialog,
-                  ),
+                  if (bluetoothPrinterSupported)
+                    _addPrinterChip(
+                      icon: Icons.bluetooth,
+                      label: 'Bluetooth',
+                      onPressed: _addBluetoothDialog,
+                    ),
+                  if (usbPrinterSupported)
+                    _addPrinterChip(
+                      icon: Icons.usb,
+                      label: 'USB',
+                      onPressed: _addUsbDialog,
+                    ),
                 ],
               ),
               const SizedBox(height: 8),
               if (_m.printers.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Text('No printers yet. Add a Network or Bluetooth printer.',
-                      style: TextStyle(color: Colors.white54)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24),
+                  child: Text('No printers yet. $printPanelPlatformHint',
+                      style: const TextStyle(color: Colors.white54)),
                 )
               else
                 ..._m.printers.map(_printerTile),
@@ -344,7 +349,11 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
     final devices = await UsbPrinterService().scan();
     if (!mounted) return;
     if (devices.isEmpty) {
-      await _toast('No USB printer found. Connect via OTG and allow access.');
+      await _toast(
+        Platform.isWindows
+            ? 'No USB printer found. Connect the printer and try again.'
+            : 'No USB printer found. Connect via OTG and allow access.',
+      );
       return;
     }
     await showDialog<void>(

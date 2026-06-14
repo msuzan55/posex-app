@@ -1,90 +1,127 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-import 'apk_installer.dart';
-
-/// Result of an update check against the PosEx backend.
+/// Result of an update check.
 class UpdateInfo {
   UpdateInfo({
     required this.latestBuild,
     required this.versionLabel,
     required this.apkUrl,
-    this.releaseNotes = '',
   });
 
   final int latestBuild;
   final String versionLabel;
   final String apkUrl;
-  final String releaseNotes;
 }
 
-/// Checks PosEx backend for a newer APK, downloads it, then launches the
-/// system installer (same signing key required for in-place update).
+enum UpdateDownloadState {
+  idle,
+  downloading,
+  ready,
+  failed,
+}
+
+/// Checks GitHub Releases, auto-downloads the APK, then installs via the
+/// Android package installer (same signing key required for OTA update).
 class UpdateService {
-  UpdateService({String? apiBaseUrl})
-      : apiBaseUrl = (apiBaseUrl ?? 'https://posex.lk').replaceAll(RegExp(r'/$'), '');
+  static const MethodChannel _installChannel = MethodChannel(
+    'lk.posex.posex_app/apk_install',
+  );
 
-  final String apiBaseUrl;
+  static const String _latestReleaseApi =
+      'https://api.github.com/repos/msuzan55/posex-app/releases/latest';
+  static const _apkFileName = 'posex-update.apk';
+  static const _prefDownloadedBuild = 'posex_downloaded_build';
 
-  Uri get _latestUri => Uri.parse('$apiBaseUrl/api/v1/app/latest');
+  UpdateDownloadState state = UpdateDownloadState.idle;
+  double downloadProgress = 0;
+  String? lastError;
 
-  /// Returns update info when backend version_code > installed buildNumber.
+  /// Returns update info if the latest release build number is greater than the
+  /// installed one, otherwise null.
   Future<UpdateInfo?> checkForUpdate() async {
     try {
       final info = await PackageInfo.fromPlatform();
       final currentBuild = int.tryParse(info.buildNumber) ?? 0;
 
       final res = await http
-          .get(_latestUri, headers: {'Accept': 'application/json'})
-          .timeout(const Duration(seconds: 12));
+          .get(
+            Uri.parse(_latestReleaseApi),
+            headers: {'Accept': 'application/vnd.github+json'},
+          )
+          .timeout(const Duration(seconds: 15));
       if (res.statusCode != 200) return null;
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
-      final latestBuild = int.tryParse('${data['version_code']}') ?? 0;
+      final tag = (data['tag_name'] ?? '') as String;
+      final latestBuild = _parseBuildNumber(tag);
       if (latestBuild <= currentBuild) return null;
 
-      final apkUrl = (data['apk_url'] ?? '') as String;
-      if (apkUrl.isEmpty) return null;
+      final assets = (data['assets'] as List?) ?? const [];
+      String? apkUrl;
+      for (final a in assets.cast<Map<String, dynamic>>()) {
+        final name = (a['name'] ?? '') as String;
+        if (name.toLowerCase().endsWith('.apk')) {
+          apkUrl = a['browser_download_url'] as String?;
+          break;
+        }
+      }
+      if (apkUrl == null) return null;
 
       return UpdateInfo(
         latestBuild: latestBuild,
-        versionLabel: (data['version_name'] ?? 'Update').toString(),
+        versionLabel: (data['name'] as String?)?.trim().isNotEmpty == true
+            ? data['name'] as String
+            : tag,
         apkUrl: apkUrl,
-        releaseNotes: (data['release_notes'] ?? '').toString(),
       );
     } catch (_) {
       return null;
     }
   }
 
-  /// Ensures Android can install packages, downloads APK, opens installer.
-  Future<void> downloadAndInstall(
-    String apkUrl, {
+  Future<File> apkFile() async {
+    final dir = await getApplicationSupportDirectory();
+    final updatesDir = Directory('${dir.path}/updates');
+    if (!await updatesDir.exists()) {
+      await updatesDir.create(recursive: true);
+    }
+    return File('${updatesDir.path}/$_apkFileName');
+  }
+
+  Future<bool> isDownloadReady(UpdateInfo info) async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedBuild = prefs.getInt(_prefDownloadedBuild) ?? 0;
+    if (savedBuild != info.latestBuild) return false;
+    final file = await apkFile();
+    return file.existsSync() && file.lengthSync() > 4096;
+  }
+
+  /// Download APK to app storage. Safe to call multiple times.
+  Future<void> downloadUpdate(
+    UpdateInfo info, {
     void Function(double progress)? onProgress,
   }) async {
-    if (Platform.isAndroid) {
-      final allowed = await ApkInstaller.canInstallPackages();
-      if (!allowed) {
-        await ApkInstaller.openInstallPermissionSettings();
-        throw Exception(
-          'Allow PosEx to install updates in Settings, then tap Update again',
-        );
-      }
-    }
+    if (state == UpdateDownloadState.downloading) return;
 
-    final dir = await getApplicationSupportDirectory();
-    final file = File('${dir.path}/posex-update.apk');
+    state = UpdateDownloadState.downloading;
+    downloadProgress = 0;
+    lastError = null;
+
+    final file = await apkFile();
     if (file.existsSync()) {
       await file.delete();
     }
 
     final client = http.Client();
     try {
-      final resp = await client.send(http.Request('GET', Uri.parse(apkUrl)));
+      final resp = await client.send(http.Request('GET', Uri.parse(info.apkUrl)));
       if (resp.statusCode != 200) {
         throw Exception('Download failed (${resp.statusCode})');
       }
@@ -96,20 +133,67 @@ class UpdateService {
         received += chunk.length;
         sink.add(chunk);
         if (total > 0) {
-          onProgress?.call(received / total);
+          downloadProgress = received / total;
+          onProgress?.call(downloadProgress);
         }
       }
       await sink.flush();
       await sink.close();
+
+      if (!file.existsSync() || file.lengthSync() < 4096) {
+        throw Exception('Downloaded file is incomplete');
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_prefDownloadedBuild, info.latestBuild);
+      state = UpdateDownloadState.ready;
+      downloadProgress = 1;
+    } catch (e) {
+      state = UpdateDownloadState.failed;
+      lastError = e.toString();
+      if (file.existsSync()) {
+        await file.delete();
+      }
+      rethrow;
     } finally {
       client.close();
     }
+  }
 
-    if (!file.existsSync() || file.lengthSync() < 100 * 1024) {
-      throw Exception('Downloaded file is invalid');
+  /// Launch Android package installer for the downloaded APK.
+  Future<void> installDownloadedApk() async {
+    if (!Platform.isAndroid) {
+      throw Exception('Updates are supported on Android only');
     }
 
-    onProgress?.call(1);
-    await ApkInstaller.install(file.path);
+    final file = await apkFile();
+    if (!file.existsSync()) {
+      throw Exception('Update file missing — download again');
+    }
+
+    final canInstall =
+        await _installChannel.invokeMethod<bool>('canRequestPackageInstalls') ??
+            false;
+    if (!canInstall) {
+      await _installChannel.invokeMethod<void>('openInstallPermissionSettings');
+      throw Exception(
+        'Allow PosEx to install updates (Unknown apps), then tap Update again.',
+      );
+    }
+
+    await _installChannel.invokeMethod<void>('installApk', {
+      'path': file.path,
+    });
+  }
+
+  int _parseBuildNumber(String tag) {
+    // Prefer explicit build-123 tags from CI.
+    final buildMatch = RegExp(r'build-(\d+)', caseSensitive: false).firstMatch(tag);
+    if (buildMatch != null) {
+      return int.tryParse(buildMatch.group(1)!) ?? 0;
+    }
+    final matches = RegExp(r'\d+').allMatches(tag).toList();
+    if (matches.isEmpty) return 0;
+    return int.tryParse(matches.last.group(0)!) ?? 0;
   }
 }

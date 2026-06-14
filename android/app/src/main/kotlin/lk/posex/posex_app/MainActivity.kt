@@ -13,7 +13,7 @@ import java.io.File
 class MainActivity : FlutterActivity() {
     companion object {
         private const val PRINT_CHANNEL = "lk.posex.posex_app/print_service"
-        private const val INSTALL_CHANNEL = "lk.posex.posex_app/install"
+        private const val INSTALL_CHANNEL = "lk.posex.posex_app/apk_install"
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -37,8 +37,8 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALL_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "canInstallPackages" -> {
-                        result.success(canInstallPackages())
+                    "canRequestPackageInstalls" -> {
+                        result.success(canRequestPackageInstalls())
                     }
                     "openInstallPermissionSettings" -> {
                         openInstallPermissionSettings()
@@ -47,14 +47,14 @@ class MainActivity : FlutterActivity() {
                     "installApk" -> {
                         val path = call.argument<String>("path")
                         if (path.isNullOrBlank()) {
-                            result.error("invalid_path", "APK path is required", null)
+                            result.error("INVALID_PATH", "APK path is missing", null)
                             return@setMethodCallHandler
                         }
                         try {
                             installApk(path)
                             result.success(true)
                         } catch (e: Exception) {
-                            result.error("install_failed", e.message, null)
+                            result.error("INSTALL_FAILED", e.message, null)
                         }
                     }
                     else -> result.notImplemented()
@@ -62,7 +62,7 @@ class MainActivity : FlutterActivity() {
             }
     }
 
-    private fun canInstallPackages(): Boolean {
+    private fun canRequestPackageInstalls(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             packageManager.canRequestPackageInstalls()
         } else {
@@ -74,7 +74,7 @@ class MainActivity : FlutterActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                Uri.parse("package:$packageName")
+                Uri.parse("package:$packageName"),
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
         }
@@ -82,19 +82,14 @@ class MainActivity : FlutterActivity() {
 
     private fun installApk(path: String) {
         val file = File(path)
-        if (!file.exists()) {
-            throw IllegalStateException("Downloaded APK not found")
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
-            openInstallPermissionSettings()
-            throw IllegalStateException("Allow PosEx to install updates, then tap Update again")
+        if (!file.exists() || file.length() < 1024) {
+            throw IllegalStateException("Update file not found or incomplete")
         }
 
         val uri = FileProvider.getUriForFile(
             this,
             "$packageName.fileprovider",
-            file
+            file,
         )
 
         val intent = Intent(Intent.ACTION_VIEW).apply {

@@ -74,7 +74,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   Timer? _fabTimer;
   Timer? _probeTimer;
   UpdateInfo? _update;
-  double? _downloadProgress;
+  UpdateDownloadState _updateState = UpdateDownloadState.idle;
+  double _downloadProgress = 0;
+  String? _updateError;
 
   @override
   void initState() {
@@ -124,32 +126,93 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   Future<void> _checkForUpdate() async {
     final info = await _updateService.checkForUpdate();
-    if (mounted && info != null) setState(() => _update = info);
+    if (!mounted || info == null) return;
+
+    setState(() {
+      _update = info;
+      _updateError = null;
+    });
+
+    if (await _updateService.isDownloadReady(info)) {
+      if (mounted) {
+        setState(() => _updateState = UpdateDownloadState.ready);
+      }
+      return;
+    }
+
+    await _downloadUpdate(info);
+  }
+
+  Future<void> _downloadUpdate(UpdateInfo info) async {
+    if (_updateState == UpdateDownloadState.downloading) return;
+
+    setState(() {
+      _updateState = UpdateDownloadState.downloading;
+      _downloadProgress = 0;
+      _updateError = null;
+    });
+
+    try {
+      await _updateService.downloadUpdate(
+        info,
+        onProgress: (p) {
+          if (mounted) {
+            setState(() => _downloadProgress = p);
+          }
+        },
+      );
+      if (mounted) {
+        setState(() => _updateState = UpdateDownloadState.ready);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _updateState = UpdateDownloadState.failed;
+          _updateError = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
   }
 
   Future<void> _runUpdate() async {
     final info = _update;
-    if (info == null || _downloadProgress != null) return;
-    setState(() => _downloadProgress = 0);
-    try {
-      await _updateService.downloadAndInstall(
-        info.apkUrl,
-        onProgress: (p) {
-          if (mounted) setState(() => _downloadProgress = p);
-        },
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString().replaceFirst('Exception: ', '')),
-            backgroundColor: Colors.red.shade800,
-            duration: const Duration(seconds: 5),
-          ),
-        );
+    if (info == null) return;
+
+    if (_updateState == UpdateDownloadState.ready) {
+      try {
+        await _updateService.installDownloadedApk();
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _updateState = UpdateDownloadState.failed;
+            _updateError = e.toString().replaceFirst('Exception: ', '');
+          });
+        }
       }
+      return;
     }
-    if (mounted) setState(() => _downloadProgress = null);
+
+    if (_updateState == UpdateDownloadState.downloading) return;
+
+    await _downloadUpdate(info);
+  }
+
+  String _updateBannerText() {
+    final info = _update;
+    if (info == null) return '';
+
+    switch (_updateState) {
+      case UpdateDownloadState.downloading:
+        return 'Downloading update… ${(_downloadProgress * 100).toStringAsFixed(0)}%';
+      case UpdateDownloadState.ready:
+        return 'Update ready — tap to install now';
+      case UpdateDownloadState.failed:
+        return _updateError == null
+            ? 'Update failed — tap to retry'
+            : 'Update failed — tap to retry';
+      case UpdateDownloadState.idle:
+        return 'Update available — preparing download…';
+    }
   }
 
   /// Camera + photo/storage so product-photo capture and gallery upload work.
@@ -277,34 +340,70 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                   left: 0,
                   right: 0,
                   child: Material(
-                    color: const Color(0xFFF97316),
+                    color: _updateState == UpdateDownloadState.ready
+                        ? const Color(0xFF059669)
+                        : const Color(0xFFF97316),
                     child: InkWell(
-                      onTap: _downloadProgress == null ? _runUpdate : null,
+                      onTap: _updateState == UpdateDownloadState.downloading
+                          ? null
+                          : _runUpdate,
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 10),
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
                         child: Row(
                           children: [
-                            const Icon(Icons.system_update,
-                                color: Colors.white, size: 20),
+                            Icon(
+                              _updateState == UpdateDownloadState.ready
+                                  ? Icons.install_mobile
+                                  : Icons.system_update,
+                              color: Colors.white,
+                              size: 20,
+                            ),
                             const SizedBox(width: 10),
                             Expanded(
-                              child: Text(
-                                _downloadProgress == null
-                                    ? 'Update ${_update!.versionLabel} — tap to install'
-                                    : _downloadProgress! >= 1
-                                        ? 'Opening installer…'
-                                        : 'Downloading update… ${(_downloadProgress! * 100).toStringAsFixed(0)}%',
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _updateBannerText(),
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (_update!.versionLabel.isNotEmpty)
+                                    Text(
+                                      _update!.versionLabel,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.9),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
-                            if (_downloadProgress == null)
+                            if (_updateState == UpdateDownloadState.downloading)
+                              SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  value: _downloadProgress > 0
+                                      ? _downloadProgress
+                                      : null,
+                                  color: Colors.white,
+                                ),
+                              )
+                            else
                               GestureDetector(
                                 onTap: () => setState(() => _update = null),
-                                child: const Icon(Icons.close,
-                                    color: Colors.white, size: 20),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
                               ),
                           ],
                         ),

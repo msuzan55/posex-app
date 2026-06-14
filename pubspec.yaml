@@ -3,6 +3,8 @@ description: PosEx mobile app — offline-first POS for Sri Lankan retail.
 publish_to: 'none'
 
 version: 1.0.1+2
+# versionName+versionCode above are defaults for local builds only.
+# GitHub Actions sets --build-name=1.0.{run} and --build-number={run} on every push.
 
 environment:
   sdk: ^3.12.2
@@ -24,6 +26,10 @@ dependencies:
   http: ^1.2.2
   open_filex: ^4.5.0
   path_provider: ^2.1.4
+  device_info_plus: ^11.2.0
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.1.6
+  flutter_local_notifications: ^18.0.1
 
 dev_dependencies:
   flutter_test:

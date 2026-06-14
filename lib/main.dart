@@ -7,10 +7,13 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
+import 'print_server/device_info_service.dart';
+import 'print_server/print_foreground_service.dart';
 import 'print_server/print_http_server.dart';
 import 'print_server/print_server_panel.dart';
 import 'print_server/printer_manager.dart';
 import 'print_server/printer_store.dart';
+import 'push/push_registration_service.dart';
 import 'update/update_service.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
@@ -60,43 +63,62 @@ class WebViewScreen extends StatefulWidget {
   State<WebViewScreen> createState() => _WebViewScreenState();
 }
 
-class _WebViewScreenState extends State<WebViewScreen> {
+class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserver {
   late final WebViewController _controller;
   late final PrinterManager _printerManager;
   late final PrintHttpServer _printServer;
   final UpdateService _updateService = UpdateService();
 
   bool _loading = true;
-  bool _fabProminent = true; // brighter for the first 5s
+  bool _showPrintFab = true; // visible for 5s on launch, then hidden
   Timer? _fabTimer;
+  Timer? _probeTimer;
   UpdateInfo? _update;
   double? _downloadProgress;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _printerManager = PrinterManager(PrinterStore());
     _printServer = PrintHttpServer(_printerManager);
     _bootstrap();
     _initWebView();
 
-    // Floating button is prominent for 5s, then dims but stays tappable.
+    // Printer button bottom-right for 5s on open, then fully hidden.
     _fabTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) setState(() => _fabProminent = false);
+      if (mounted) setState(() => _showPrintFab = false);
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _fabTimer?.cancel();
-    _printServer.stop();
+    _probeTimer?.cancel();
+    // Keep print server + foreground service running for remote printing.
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Re-assert foreground service when app goes to background.
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      PrintForegroundService.start();
+    }
   }
 
   Future<void> _bootstrap() async {
     await _requestPermissions();
+    await DeviceInfoService.deviceName();
+    await PushRegistrationService.init();
     await _printServer.start(); // auto-start on launch
     await _printerManager.init(); // load + auto-reconnect saved printers
+    await PrintForegroundService.start(); // keep printing alive in background
+    _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _printerManager.reconnectAll();
+    });
     _checkForUpdate();
   }
 
@@ -128,6 +150,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
       Permission.camera,
       Permission.photos,
       Permission.storage,
+      Permission.notification,
       Permission.bluetoothConnect,
       Permission.bluetoothScan,
     ].request();
@@ -137,6 +160,15 @@ class _WebViewScreenState extends State<WebViewScreen> {
     final controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.black)
+      ..addJavaScriptChannel(
+        'PosExNativeBridge',
+        onMessageReceived: (JavaScriptMessage message) {
+          final text = message.message;
+          if (text.startsWith('auth:')) {
+            PushRegistrationService.setAuthToken(text.substring(5));
+          }
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (_) {
@@ -144,6 +176,7 @@ class _WebViewScreenState extends State<WebViewScreen> {
           },
           onPageFinished: (_) {
             if (mounted) setState(() => _loading = false);
+            _syncAuthTokenFromWebView();
           },
         ),
       )
@@ -159,6 +192,28 @@ class _WebViewScreenState extends State<WebViewScreen> {
     }
 
     _controller = controller;
+  }
+
+  Future<void> _syncAuthTokenFromWebView() async {
+    try {
+      await _controller.runJavaScript('''
+(function(){
+  function send(){
+    try{
+      var t=localStorage.getItem('pos_token');
+      if(t) PosExNativeBridge.postMessage('auth:'+t);
+    }catch(e){}
+  }
+  send();
+  if(!window.__posexAuthHook){
+    window.__posexAuthHook=true;
+    window.addEventListener('storage', function(e){
+      if(!e||e.key==='pos_token') send();
+    });
+  }
+})();
+''');
+    } catch (_) {}
   }
 
   Future<List<String>> _onShowFileSelector(FileSelectorParams params) async {
@@ -247,13 +302,11 @@ class _WebViewScreenState extends State<WebViewScreen> {
                     ),
                   ),
                 ),
-              // Print-server button, bottom-right.
-              Positioned(
-                right: 12,
-                bottom: 12,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 500),
-                  opacity: _fabProminent ? 1.0 : 0.35,
+              // Print-server button — bottom-right, first 5 seconds only.
+              if (_showPrintFab)
+                Positioned(
+                  right: 12,
+                  bottom: 12,
                   child: GestureDetector(
                     onTap: _openPrintPanel,
                     child: Container(
@@ -273,7 +326,6 @@ class _WebViewScreenState extends State<WebViewScreen> {
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         ),

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
+import 'device_info_service.dart';
 import 'print_models.dart';
 import 'printer_store.dart';
 import 'usb_printer_service.dart';
@@ -100,11 +101,23 @@ class PrinterManager extends ChangeNotifier {
   }
 
   /// Status payload the web app's localhostPrintService expects.
-  Map<String, dynamic> statusJson() => {
-        'status': 'online',
-        'pos_printer': isOnline(_defaultPosId ?? ''),
-        'barcode_printer': isOnline(_defaultBarcodeId ?? ''),
-      };
+  Map<String, dynamic> statusJson() {
+    final pos = _byId(_defaultPosId);
+    final barcode = _byId(_defaultBarcodeId);
+    final posOnline =
+        _defaultPosId != null && _defaultPosId!.isNotEmpty && isOnline(_defaultPosId!);
+    final barcodeOnline = _defaultBarcodeId != null &&
+        _defaultBarcodeId!.isNotEmpty &&
+        isOnline(_defaultBarcodeId!);
+    return {
+      'status': 'online',
+      'device_name': DeviceInfoService.cachedDeviceName,
+      'pos_printer': posOnline,
+      'barcode_printer': barcodeOnline,
+      'pos_printer_name': posOnline ? pos?.name : null,
+      'barcode_printer_name': barcodeOnline ? barcode?.name : null,
+    };
+  }
 
   /// Send raw bytes to the default printer for the given role.
   /// Returns null on success, or an error message.

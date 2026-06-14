@@ -9,7 +9,8 @@ import 'printer_manager.dart';
 
 /// Embedded HTTP print server on :9753, mirroring the contract the PosEx web
 /// app's localhostPrintService expects:
-///   GET  /status -> { status:"online", pos_printer, barcode_printer }
+///   GET  /status -> { status, device_name, pos_printer, barcode_printer,
+///                     pos_printer_name, barcode_printer_name }
 ///   POST /print  -> { type:"pos"|"barcode", content } | { type:"cash_drawer", command(base64) }
 class PrintHttpServer {
   PrintHttpServer(this._manager);

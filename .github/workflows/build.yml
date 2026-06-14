@@ -54,9 +54,12 @@ jobs:
         run: flutter pub get
 
       - name: Build release APK
-        # build-number = run number → ever-increasing versionCode so the app
-        # (and Android) treat each build as a real update.
-        run: flutter build apk --release --build-number=${{ github.run_number }}
+        # Auto version on every CI build — no manual pubspec bump needed.
+        # build-number = versionCode (for Android updates + in-app updater).
+        run: |
+          flutter build apk --release \
+            --build-name="1.0.${{ github.run_number }}" \
+            --build-number=${{ github.run_number }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

@@ -48,6 +48,29 @@ class WindowsInstallPaths {
     await installDir();
   }
 
+  /// Hidden helper: wait for PosEx-Setup.exe, then relaunch PosEx (no cmd window).
+  static Future<File> writeSilentSetupLauncher({
+    required File setupExe,
+    required File targetExe,
+  }) async {
+    final temp = await getTemporaryDirectory();
+    final script = File('${temp.path}/posex_setup_restart.vbs');
+    final setup = setupExe.path.replaceAll('/', r'\');
+    final exe = targetExe.path.replaceAll('/', r'\');
+
+    await script.writeAsString('''
+Set sh = CreateObject("WScript.Shell")
+rc = sh.Run("""$setup"" /SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS", 0, True)
+If rc = 0 Or rc = 3010 Or rc = 1641 Then
+  sh.Run """$exe""", 1, False
+End If
+Set fso = CreateObject("Scripting.FileSystemObject")
+On Error Resume Next
+fso.DeleteFile WScript.ScriptFullName
+''');
+    return script;
+  }
+
   static Future<File> writeInPlaceUpdater({
     required Directory sourceDir,
     required Directory targetDir,

@@ -478,15 +478,20 @@ class UpdateService {
       throw Exception('Installer missing or corrupt — download again');
     }
 
-    // Launch Inno Setup directly — never via cmd.exe (avoids a visible command window).
+    final installDir = await WindowsInstallPaths.installDir();
+    var targetExe = File('${installDir.path}/posex_app.exe');
+    if (!targetExe.existsSync()) {
+      targetExe = File(Platform.resolvedExecutable);
+    }
+
+    // Wait for silent setup, then relaunch PosEx (works with existing Setup.exe downloads).
+    final launcher = await WindowsInstallPaths.writeSilentSetupLauncher(
+      setupExe: file,
+      targetExe: targetExe,
+    );
     await Process.start(
-      file.path,
-      [
-        '/SILENT',
-        '/SUPPRESSMSGBOXES',
-        '/NORESTART',
-        '/CLOSEAPPLICATIONS',
-      ],
+      'wscript.exe',
+      ['//B', '//Nologo', launcher.path],
       mode: ProcessStartMode.detached,
       runInShell: false,
     );

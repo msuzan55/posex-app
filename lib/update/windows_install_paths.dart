@@ -14,17 +14,37 @@ class WindowsInstallPaths {
     final saved = prefs.getString(_installDirKey);
     if (saved != null && saved.isNotEmpty) {
       final dir = Directory(saved);
-      if (dir.existsSync()) return dir;
+      if (_looksLikePosexInstall(dir)) return dir;
     }
 
-    final exe = File(Platform.resolvedExecutable);
-    final dir = exe.parent;
-    await prefs.setString(_installDirKey, dir.path);
-    return dir;
+    // Prefer current executable location only if it already looks like PosEx.
+    // This avoids pinning temp extraction paths after an update.
+    final currentDir = File(Platform.resolvedExecutable).parent;
+    if (_looksLikePosexInstall(currentDir)) {
+      await prefs.setString(_installDirKey, currentDir.path);
+      return currentDir;
+    }
+
+    // Fallback to default installer path.
+    final defaultDir = Directory(_defaultInstallPath());
+    if (_looksLikePosexInstall(defaultDir)) {
+      await prefs.setString(_installDirKey, defaultDir.path);
+      return defaultDir;
+    }
+
+    // Last resort: keep current executable directory.
+    await prefs.setString(_installDirKey, currentDir.path);
+    return currentDir;
   }
 
   /// Call once at startup so the install path is pinned before any OTA runs from temp.
   static Future<void> rememberCurrentInstallDir() async {
+    final currentDir = File(Platform.resolvedExecutable).parent;
+    if (_looksLikePosexInstall(currentDir)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_installDirKey, currentDir.path);
+      return;
+    }
     await installDir();
   }
 
@@ -43,12 +63,34 @@ class WindowsInstallPaths {
     // User data (login, IndexedDB) lives in AppData — not touched by this copy.
     await script.writeAsString('''
 @echo off
+setlocal enableextensions
 ping 127.0.0.1 -n 3 >nul
+if not exist "$target\\$exeName" (
+  echo Target executable missing in "$target"
+  exit /b 3
+)
 robocopy "$source" "$target" /E /IS /IT /R:5 /W:2 /NFL /NDL /NJH /NJS /NC /NS /NP
 if %ERRORLEVEL% GEQ 8 exit /b %ERRORLEVEL%
 start "" "$exe"
 del "%~f0"
 ''');
     return script;
+  }
+
+  static bool _looksLikePosexInstall(Directory dir) {
+    if (!dir.existsSync()) return false;
+    final exe = File('${dir.path}${Platform.pathSeparator}posex_app.exe');
+    if (!exe.existsSync()) return false;
+    final lower = dir.path.toLowerCase();
+    if (lower.contains('${Platform.pathSeparator}temp') ||
+        lower.contains('${Platform.pathSeparator}tmp')) {
+      return false;
+    }
+    return true;
+  }
+
+  static String _defaultInstallPath() {
+    final pf = Platform.environment['ProgramFiles'] ?? r'C:\Program Files';
+    return '$pf\\PosEx';
   }
 }

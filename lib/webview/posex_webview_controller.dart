@@ -2,26 +2,15 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
-import 'package:webview_windows/webview_windows.dart' as win;
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
-const _bridgeShim = r'''
-(function(){
-  if(window.PosExNativeBridge) return;
-  if(window.chrome&&window.chrome.webview){
-    window.PosExNativeBridge={
-      postMessage:function(m){
-        window.chrome.webview.postMessage(typeof m==='string'?m:String(m));
-      }
-    };
-  }
-})();
-''';
+class WebFileSelectorParams {
+  WebFileSelectorParams({required this.isCaptureEnabled});
 
-/// Cross-platform WebView wrapper (Android: webview_flutter, Windows: WebView2).
+  final bool isCaptureEnabled;
+}
+
+/// Cross-platform WebView wrapper via flutter_inappwebview.
 class PosexWebViewController {
   PosexWebViewController({
     required this.onBridgeMessage,
@@ -33,170 +22,113 @@ class PosexWebViewController {
   final void Function(String message) onBridgeMessage;
   final VoidCallback onPageFinished;
   final void Function(bool loading) onLoadingChanged;
-  final Future<List<String>> Function(FileSelectorParams params)
+  final Future<List<String>> Function(WebFileSelectorParams params)
       onShowFileSelector;
 
-  WebViewController? _android;
-  win.WebviewController? _windows;
+  InAppWebViewController? _controller;
   bool _canGoBack = false;
-
-  final List<StreamSubscription<dynamic>> _subscriptions = [];
-
-  static bool _windowsEnvReady = false;
-
-  /// Persistent WebView2 profile so IndexedDB / localStorage survive restarts (offline sync).
-  static Future<void> _ensureWindowsWebViewEnvironment() async {
-    if (_windowsEnvReady) return;
-    final dir = await getApplicationSupportDirectory();
-    final userData = Directory('${dir.path}${Platform.pathSeparator}webview2');
-    if (!userData.existsSync()) {
-      await userData.create(recursive: true);
-    }
-    await win.WebviewController.initializeEnvironment(
-      userDataPath: userData.path,
-    );
-    _windowsEnvReady = true;
-  }
+  bool _ready = false;
+  String? _initialUrl;
 
   bool get isReady {
-    if (Platform.isWindows) {
-      return _windows?.value.isInitialized == true;
-    }
-    return _android != null;
+    return _ready;
   }
 
   Future<void> initialize(String initialUrl) async {
-    if (Platform.isWindows) {
-      await _initWindows(initialUrl);
-    } else {
-      await _initAndroid(initialUrl);
-    }
-  }
-
-  Future<void> _initAndroid(String initialUrl) async {
-    final controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.black)
-      ..addJavaScriptChannel(
-        'PosExNativeBridge',
-        onMessageReceived: (JavaScriptMessage message) {
-          onBridgeMessage(message.message);
-        },
-      )
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageStarted: (_) => onLoadingChanged(true),
-          onPageFinished: (_) {
-            onLoadingChanged(false);
-            onPageFinished();
-          },
-          onWebResourceError: (error) {
-            debugPrint('[WebView] ${error.errorCode} ${error.description}');
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(initialUrl));
-
-    final platform = controller.platform;
-    if (platform is AndroidWebViewController) {
-      platform.setMediaPlaybackRequiresUserGesture(false);
-      platform.setMixedContentMode(MixedContentMode.alwaysAllow);
-      platform.setOnShowFileSelector(onShowFileSelector);
-      platform.setOnPlatformPermissionRequest((request) => request.grant());
-    }
-
-    _android = controller;
-  }
-
-  Future<void> _initWindows(String initialUrl) async {
-    await _ensureWindowsWebViewEnvironment();
-    final controller = win.WebviewController();
-    _windows = controller;
-
-    try {
-      await controller.initialize();
-      await controller.setBackgroundColor(Colors.black);
-      await controller.setPopupWindowPolicy(win.WebviewPopupWindowPolicy.deny);
-      await controller.addScriptToExecuteOnDocumentCreated(_bridgeShim);
-
-      _subscriptions
-        ..add(controller.loadingState.listen((state) {
-          onLoadingChanged(state == win.LoadingState.loading);
-          if (state == win.LoadingState.navigationCompleted) {
-            onPageFinished();
-          }
-        }))
-        ..add(controller.historyChanged.listen((history) {
-          _canGoBack = history.canGoBack;
-        }))
-        ..add(controller.webMessage.listen((message) {
-          if (message is String) {
-            onBridgeMessage(message);
-          } else if (message != null) {
-            onBridgeMessage(message.toString());
-          }
-        }));
-
-      await controller.loadUrl(initialUrl);
-    } on PlatformException catch (e) {
-      debugPrint('[WebView] Windows init failed: ${e.code} ${e.message}');
-      rethrow;
-    }
+    _initialUrl = initialUrl;
+    _ready = true;
   }
 
   Widget buildWidget() {
-    if (Platform.isWindows) {
-      final controller = _windows;
-      if (controller == null || !controller.value.isInitialized) {
-        return const Center(
-          child: CircularProgressIndicator(color: Color(0xFFF97316)),
-        );
-      }
-      return win.Webview(
-        controller,
-        permissionRequested: (url, kind, initiated) async {
-          return win.WebviewPermissionDecision.allow;
-        },
-      );
-    }
-
-    final controller = _android;
-    if (controller == null) {
+    if (!_ready || _initialUrl == null) {
       return const Center(
         child: CircularProgressIndicator(color: Color(0xFFF97316)),
       );
     }
-    return WebViewWidget(controller: controller);
+    return InAppWebView(
+      initialUrlRequest: URLRequest(url: WebUri(_initialUrl!)),
+      initialSettings: InAppWebViewSettings(
+        javaScriptEnabled: true,
+        mediaPlaybackRequiresUserGesture: false,
+        allowsInlineMediaPlayback: true,
+        supportZoom: false,
+        transparentBackground: false,
+      ),
+      initialUserScripts: UnmodifiableListView<UserScript>([
+        UserScript(
+          source: '''
+window.PosExNativeBridge = window.PosExNativeBridge || {
+  postMessage: function(m){
+    window.flutter_inappwebview.callHandler('PosExNativeBridge', String(m));
+  }
+};
+''',
+          injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+        ),
+      ]),
+      onWebViewCreated: (controller) {
+        _controller = controller;
+        controller.addJavaScriptHandler(
+          handlerName: 'PosExNativeBridge',
+          callback: (args) {
+            if (args.isEmpty) return;
+            onBridgeMessage('${args.first}');
+          },
+        );
+      },
+      onLoadStart: (_, __) => onLoadingChanged(true),
+      onLoadStop: (_, __) async {
+        onLoadingChanged(false);
+        _canGoBack = await _controller?.canGoBack() ?? false;
+        onPageFinished();
+      },
+      onReceivedError: (_, request, error) {
+        if (request.isForMainFrame ?? false) {
+          debugPrint('[WebView] ${error.code} ${error.description}');
+        }
+      },
+      onPermissionRequest: (_, request) async {
+        return PermissionResponse(
+          resources: request.resources,
+          action: PermissionResponseAction.GRANT,
+        );
+      },
+      androidOnShowFileChooser: (_, params) async {
+        final files = await onShowFileSelector(
+          WebFileSelectorParams(isCaptureEnabled: params.isCaptureEnabled),
+        );
+        return FileChooserResponse(
+          filePaths: files
+              .map((f) {
+                if (f.startsWith('file://')) return f.substring(7);
+                return f;
+              })
+              .toList(),
+          handledByClient: true,
+        );
+      },
+      onUpdateVisitedHistory: (_, __, ___, ____) async {
+        _canGoBack = await _controller?.canGoBack() ?? false;
+      },
+    );
   }
 
   Future<void> runJavaScript(String js) async {
-    if (Platform.isWindows) {
-      await _windows?.executeScript(js);
-      return;
-    }
-    await _android?.runJavaScript(js);
+    await _controller?.evaluateJavascript(source: js);
   }
 
   Future<bool> canGoBack() async {
-    if (Platform.isWindows) return _canGoBack;
-    return _android?.canGoBack() ?? false;
+    _canGoBack = await _controller?.canGoBack() ?? _canGoBack;
+    return _canGoBack;
   }
 
   Future<void> goBack() async {
-    if (Platform.isWindows) {
-      await _windows?.goBack();
-      return;
-    }
-    await _android?.goBack();
+    await _controller?.goBack();
   }
 
   Future<void> dispose() async {
-    for (final sub in _subscriptions) {
-      await sub.cancel();
-    }
-    _subscriptions.clear();
-    await _windows?.dispose();
-    _windows = null;
-    _android = null;
+    _controller = null;
+    _ready = false;
+    _initialUrl = null;
   }
 }

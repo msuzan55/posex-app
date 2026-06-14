@@ -13,8 +13,7 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  webview_flutter: ^4.10.0
-  webview_flutter_android: ^4.3.0
+  flutter_inappwebview: ^6.1.5
   permission_handler: ^11.3.1
   image_picker: ^1.1.2
   shelf: ^1.4.1
@@ -29,7 +28,6 @@ dependencies:
   firebase_core: ^3.8.1
   firebase_messaging: ^15.1.6
   flutter_local_notifications: ^18.0.1
-  webview_windows: ^0.4.0
   archive: ^4.0.9
 
 dev_dependencies:

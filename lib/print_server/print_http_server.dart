@@ -19,9 +19,9 @@ class PrintHttpServer {
   static const int port = 9753;
 
   final PrinterManager _manager;
-  HttpServer? _server;
+  final List<HttpServer> _servers = <HttpServer>[];
 
-  bool get isRunning => _server != null;
+  bool get isRunning => _servers.isNotEmpty;
 
   static const Map<String, String> _cors = {
     'Access-Control-Allow-Origin': '*',
@@ -30,26 +30,40 @@ class PrintHttpServer {
   };
 
   Future<bool> start() async {
-    if (_server != null) return true;
-    try {
-      // Bind to loopback only — WebView calls http://127.0.0.1:9753
-      _server = await shelf_io.serve(
-        _handler,
-        InternetAddress.loopbackIPv4,
-        port,
-        shared: true,
-      );
-      return true;
-    } catch (e) {
-      debugPrint('[PrintServer] start failed: $e');
-      _server = null;
+    if (_servers.isNotEmpty) return true;
+
+    // WebView may resolve localhost to either 127.0.0.1 or ::1 depending on
+    // platform/runtime. Bind both loopback families so localhost is reliable.
+    await _bind(InternetAddress.loopbackIPv4);
+    await _bind(InternetAddress.loopbackIPv6);
+
+    if (_servers.isEmpty) {
+      debugPrint('[PrintServer] start failed: could not bind on $port');
       return false;
     }
+    return true;
   }
 
   Future<void> stop() async {
-    await _server?.close(force: true);
-    _server = null;
+    for (final server in _servers) {
+      await server.close(force: true);
+    }
+    _servers.clear();
+  }
+
+  Future<void> _bind(InternetAddress address) async {
+    try {
+      final server = await shelf_io.serve(
+        _handler,
+        address,
+        port,
+        shared: true,
+      );
+      _servers.add(server);
+    } catch (e) {
+      // One family may already be covered by another bind; keep going.
+      debugPrint('[PrintServer] bind ${address.address} failed: $e');
+    }
   }
 
   Future<Response> _handler(Request request) async {

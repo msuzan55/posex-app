@@ -46,6 +46,7 @@ class UpdateService {
   static const _apkFileName = 'posex-update.apk';
   static const _windowsZipFileName = 'posex-update-windows.zip';
   static const _windowsExtractDirName = 'posex-update-win';
+  static const _windowsStageDirName = 'posex-update-stage';
   static const _prefDownloadedBuild = 'posex_downloaded_build';
 
   UpdateDownloadState state = UpdateDownloadState.idle;
@@ -227,7 +228,8 @@ class UpdateService {
           throw Exception('Downloaded file is not a valid ZIP');
         }
         await _extractWindowsZip(file);
-        if (await _windowsExeFromDownload() == null) {
+        final staged = await _prepareWindowsStaging();
+        if (staged == null) {
           await file.delete();
           throw Exception('Windows update ZIP does not contain posex_app.exe');
         }
@@ -332,10 +334,54 @@ class UpdateService {
 
     for (final file in archive) {
       if (!file.isFile) continue;
-      final out = File('${extractDir.path}/${file.name}');
+      final safeRel = _safeZipRelativePath(file.name);
+      if (safeRel == null) continue;
+      final out = File('${extractDir.path}/$safeRel');
       await out.parent.create(recursive: true);
       await out.writeAsBytes(file.content as List<int>);
     }
+  }
+
+  String? _safeZipRelativePath(String rawName) {
+    final normalized = rawName.replaceAll('\\', '/').trim();
+    if (normalized.isEmpty || normalized.startsWith('/')) return null;
+    final parts = normalized.split('/').where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return null;
+    if (parts.any((p) => p == '..' || p == '.')) return null;
+    return parts.join(Platform.pathSeparator);
+  }
+
+  Future<Directory> _windowsStageDir() async {
+    final dir = await getTemporaryDirectory();
+    return Directory('${dir.path}/$_windowsStageDirName');
+  }
+
+  Future<Directory?> _prepareWindowsStaging() async {
+    final extractedExe = await _windowsExeFromDownload();
+    if (extractedExe == null) return null;
+
+    final root = extractedExe.parent;
+    final stageDir = await _windowsStageDir();
+    if (stageDir.existsSync()) {
+      await stageDir.delete(recursive: true);
+    }
+    await stageDir.create(recursive: true);
+
+    await for (final entity in root.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      final lower = entity.path.toLowerCase();
+      if (lower.endsWith(r'\data\flutter_assets\assetmanifest.bin') ||
+          lower.endsWith('/data/flutter_assets/AssetManifest.bin'.toLowerCase())) {
+        // Keep copy loop lean on very low-end devices when large trees exist.
+      }
+      final relative = entity.path.substring(root.path.length + 1);
+      final out = File('${stageDir.path}/$relative');
+      await out.parent.create(recursive: true);
+      await entity.copy(out.path);
+    }
+
+    final stagedExe = File('${stageDir.path}/posex_app.exe');
+    return stagedExe.existsSync() ? stageDir : null;
   }
 
   /// Launch in-place update: overwrite the install folder, then restart PosEx there.
@@ -361,7 +407,10 @@ class UpdateService {
       await _extractWindowsZip(zipFile);
     }
 
-    final staging = await _windowsExtractDir();
+    final staging = await _prepareWindowsStaging();
+    if (staging == null) {
+      throw Exception('Update package missing required files');
+    }
     final installDir = await WindowsInstallPaths.installDir();
     final targetExe = File('${installDir.path}/posex_app.exe');
 

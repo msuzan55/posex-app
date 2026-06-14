@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import 'platform/app_permissions.dart';
 import 'print_server/device_info_service.dart';
@@ -408,7 +407,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     } catch (_) {}
   }
 
-  Future<List<String>> _onShowFileSelector(FileSelectorParams params) async {
+  Future<List<String>> _onShowFileSelector(WebFileSelectorParams params) async {
     final picker = ImagePicker();
     final source =
         params.isCaptureEnabled ? ImageSource.camera : ImageSource.gallery;

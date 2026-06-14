@@ -58,10 +58,16 @@ class PrinterManager extends ChangeNotifier {
   }
 
   Future<void> reconnectAll() async {
+    var changed = false;
     for (final p in _printers) {
-      _online[p.id] = await _probe(p);
+      final before = _online[p.id];
+      final now = await _probe(p);
+      _online[p.id] = now;
+      if (before != now) changed = true;
     }
-    notifyListeners();
+    if (changed) {
+      notifyListeners();
+    }
   }
 
   Future<void> addPrinter(PrinterConfig printer) async {

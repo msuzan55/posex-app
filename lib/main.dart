@@ -16,6 +16,7 @@ import 'print_server/printer_manager.dart';
 import 'print_server/printer_store.dart';
 import 'push/push_registration_service.dart';
 import 'update/update_service.dart';
+import 'update/windows_install_paths.dart';
 import 'webview/posex_webview_controller.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
@@ -173,6 +174,10 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       _printServer = server;
 
       await DeviceInfoService.deviceName();
+
+      if (Platform.isWindows) {
+        await WindowsInstallPaths.rememberCurrentInstallDir();
+      }
 
       unawaited(PushRegistrationService.init());
 

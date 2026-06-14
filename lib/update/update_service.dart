@@ -8,6 +8,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'windows_install_paths.dart';
+
 /// Result of an update check.
 class UpdateInfo {
   UpdateInfo({
@@ -336,7 +338,8 @@ class UpdateService {
     }
   }
 
-  /// Launch the downloaded Windows build and exit this process.
+  /// Launch in-place update: overwrite the install folder, then restart PosEx there.
+  /// Login and offline data stay in AppData (WebView2 profile), not in the app folder.
   Future<void> installDownloadedWindowsBuild() async {
     if (!Platform.isWindows) {
       throw Exception('Windows updates are supported on Windows only');
@@ -358,14 +361,25 @@ class UpdateService {
       await _extractWindowsZip(zipFile);
     }
 
-    final exe = await _windowsExeFromDownload();
-    if (exe == null) {
-      throw Exception('Could not find posex_app.exe in the update package');
+    final staging = await _windowsExtractDir();
+    final installDir = await WindowsInstallPaths.installDir();
+    final targetExe = File('${installDir.path}/posex_app.exe');
+
+    if (!targetExe.existsSync()) {
+      throw Exception(
+        'Install folder not found. Run PosEx-Setup.exe once, then use in-app update.',
+      );
     }
 
+    final updater = await WindowsInstallPaths.writeInPlaceUpdater(
+      sourceDir: staging,
+      targetDir: installDir,
+      exeName: 'posex_app.exe',
+    );
+
     await Process.start(
-      exe.path,
-      const [],
+      'cmd.exe',
+      ['/c', updater.path],
       mode: ProcessStartMode.detached,
     );
     exit(0);

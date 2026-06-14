@@ -135,13 +135,19 @@ jobs:
             "/DAppVersion=1.0.${{ github.run_number }}" `
             "/DReleaseDir=$PWD\build\windows\x64\runner\Release"
 
+      - name: Stage Windows release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-files | Out-Null
+          Copy-Item posex-app-windows.zip release-files/
+          Copy-Item build/installer/PosEx-Setup.exe release-files/
+          Get-ChildItem release-files
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: posex-app-release-windows
-          path: |
-            posex-app-windows.zip
-            build/installer/PosEx-Setup.exe
+          path: release-files/
           if-no-files-found: error
 
   publish-release:
@@ -167,6 +173,9 @@ jobs:
       - name: Prepare release filenames
         run: |
           mv release/app-release.apk release/posex-app.apk
+          test -f release/PosEx-Setup.exe || (echo "PosEx-Setup.exe missing from artifact" && exit 1)
+          test -f release/posex-app-windows.zip || (echo "posex-app-windows.zip missing" && exit 1)
+          ls -la release/
 
       - name: Publish release assets
         uses: softprops/action-gh-release@v2

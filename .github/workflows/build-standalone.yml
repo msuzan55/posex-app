@@ -62,12 +62,12 @@ jobs:
         run: |
           if [ -n "$POSEX_KEYSTORE_BASE64" ]; then
             echo "$POSEX_KEYSTORE_BASE64" | base64 -d > android/app/posex-release.keystore
-            cat > android/key.properties <<EOF
-storePassword=${POSEX_KEYSTORE_PASSWORD}
-keyPassword=${POSEX_KEY_PASSWORD}
-keyAlias=${POSEX_KEY_ALIAS}
-storeFile=posex-release.keystore
-EOF
+            printf '%s\n' \
+              "storePassword=${POSEX_KEYSTORE_PASSWORD}" \
+              "keyPassword=${POSEX_KEY_PASSWORD}" \
+              "keyAlias=${POSEX_KEY_ALIAS}" \
+              "storeFile=posex-release.keystore" \
+              > android/key.properties
             echo "Release keystore configured for signed OTA updates."
           else
             echo "::warning::POSEX_KEYSTORE_* secrets missing — APK is debug-signed and in-app update install will fail."

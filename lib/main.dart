@@ -138,8 +138,16 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
           if (mounted) setState(() => _downloadProgress = p);
         },
       );
-    } catch (_) {
-      // ignored — banner stays so the user can retry
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red.shade800,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
     if (mounted) setState(() => _downloadProgress = null);
   }
@@ -283,8 +291,10 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                             Expanded(
                               child: Text(
                                 _downloadProgress == null
-                                    ? 'Update available — tap to install'
-                                    : 'Downloading update… ${(_downloadProgress! * 100).toStringAsFixed(0)}%',
+                                    ? 'Update ${_update!.versionLabel} — tap to install'
+                                    : _downloadProgress! >= 1
+                                        ? 'Opening installer…'
+                                        : 'Downloading update… ${(_downloadProgress! * 100).toStringAsFixed(0)}%',
                                 style: const TextStyle(
                                     color: Colors.white,
                                     fontWeight: FontWeight.w600),

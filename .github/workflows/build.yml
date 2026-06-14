@@ -35,8 +35,6 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
     needs: analyze-and-test
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -53,9 +51,23 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Configure release signing
+        if: ${{ secrets.POSEX_KEYSTORE_BASE64 != '' }}
+        env:
+          POSEX_KEYSTORE_BASE64: ${{ secrets.POSEX_KEYSTORE_BASE64 }}
+          POSEX_KEYSTORE_PASSWORD: ${{ secrets.POSEX_KEYSTORE_PASSWORD }}
+          POSEX_KEY_ALIAS: ${{ secrets.POSEX_KEY_ALIAS }}
+          POSEX_KEY_PASSWORD: ${{ secrets.POSEX_KEY_PASSWORD }}
+        run: |
+          echo "$POSEX_KEYSTORE_BASE64" | base64 -d > android/app/posex-release.keystore
+          cat > android/key.properties <<EOF
+          storePassword=${POSEX_KEYSTORE_PASSWORD}
+          keyPassword=${POSEX_KEY_PASSWORD}
+          keyAlias=${POSEX_KEY_ALIAS}
+          storeFile=posex-release.keystore
+          EOF
+
       - name: Build release APK
-        # Auto version on every CI build — no manual pubspec bump needed.
-        # build-number = versionCode (for Android updates + in-app updater).
         run: |
           flutter build apk --release \
             --build-name="1.0.${{ github.run_number }}" \
@@ -68,12 +80,16 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
-      - name: Publish GitHub Release (for in-app update)
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: PosEx build ${{ github.run_number }}
-          files: build/app/outputs/flutter-apk/app-release.apk
+      - name: Publish APK to PosEx backend
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && secrets.POSEX_APP_DEPLOY_TOKEN != ''
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POSEX_APP_DEPLOY_TOKEN: ${{ secrets.POSEX_APP_DEPLOY_TOKEN }}
+          POSEX_APP_DEPLOY_URL: ${{ secrets.POSEX_APP_DEPLOY_URL }}
+        run: |
+          URL="${POSEX_APP_DEPLOY_URL:-https://posex.lk/api/v1/app/publish}"
+          curl -f -S -X POST "$URL" \
+            -H "X-App-Deploy-Token: ${POSEX_APP_DEPLOY_TOKEN}" \
+            -F "version_code=${{ github.run_number }}" \
+            -F "version_name=1.0.${{ github.run_number }}" \
+            -F "release_notes=GitHub build ${{ github.run_number }}" \
+            -F "apk=@build/app/outputs/flutter-apk/app-release.apk"

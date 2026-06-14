@@ -24,7 +24,6 @@ dependencies:
   # In-app update (check GitHub release, download + install APK)
   package_info_plus: ^8.0.2
   http: ^1.2.2
-  open_filex: ^4.5.0
   path_provider: ^2.1.4
   device_info_plus: ^11.2.0
   firebase_core: ^3.8.1

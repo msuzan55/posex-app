@@ -6,6 +6,7 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
 import 'print_models.dart';
 import 'printer_store.dart';
+import 'usb_printer_service.dart';
 
 /// Owns the printer list, (auto) connections and the actual byte sending for
 /// all transports. Notifies listeners so the control panel can live-update.
@@ -23,6 +24,8 @@ class PrinterManager extends ChangeNotifier {
 
   /// MAC of the currently connected Bluetooth printer (plugin allows one).
   String? _btConnectedMac;
+
+  final UsbPrinterService _usb = UsbPrinterService();
 
   List<PrinterConfig> get printers => List.unmodifiable(_printers);
   String? get defaultPosId => _defaultPosId;
@@ -126,7 +129,10 @@ class PrinterManager extends ChangeNotifier {
           if (!ok) return 'Bluetooth printer not reachable.';
           break;
         case PrinterTransport.usb:
-          return 'USB printing is not enabled yet in this build.';
+          final vp = _vendorProduct(printer.address);
+          final ok = await _usb.send(vp.vendor, vp.product, bytes);
+          if (!ok) return 'USB printer not reachable.';
+          break;
       }
       _online[printer.id] = true;
       notifyListeners();
@@ -190,10 +196,19 @@ class PrinterManager extends ChangeNotifier {
         case PrinterTransport.bluetooth:
           return _ensureBluetooth(printer.address);
         case PrinterTransport.usb:
-          return false;
+          final vp = _vendorProduct(printer.address);
+          return _usb.isPresent(vp.vendor, vp.product);
       }
     } catch (_) {
       return false;
     }
+  }
+
+  ({String vendor, String product}) _vendorProduct(String address) {
+    final parts = address.split(':');
+    return (
+      vendor: parts.isNotEmpty ? parts[0] : '',
+      product: parts.length > 1 ? parts[1] : '',
+    );
   }
 }

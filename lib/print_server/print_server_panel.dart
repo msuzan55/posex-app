@@ -4,6 +4,7 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'print_http_server.dart';
 import 'print_models.dart';
 import 'printer_manager.dart';
+import 'usb_printer_service.dart';
 
 const Color _accent = Color(0xFFF97316);
 const Color _bg = Color(0xFF0A0A0A);
@@ -94,6 +95,11 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                     icon: const Icon(Icons.bluetooth, color: _accent, size: 18),
                     label: const Text('Bluetooth',
                         style: TextStyle(color: _accent)),
+                  ),
+                  TextButton.icon(
+                    onPressed: _addUsbDialog,
+                    icon: const Icon(Icons.usb, color: _accent, size: 18),
+                    label: const Text('USB', style: TextStyle(color: _accent)),
                   ),
                 ],
               ),
@@ -309,6 +315,49 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                           name: d.name.isEmpty ? 'Bluetooth printer' : d.name,
                           transport: PrinterTransport.bluetooth,
                           address: d.macAdress,
+                        ));
+                      },
+                    ))
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addUsbDialog() async {
+    await _toast('Scanning USB devices…');
+    final devices = await UsbPrinterService().scan();
+    if (!mounted) return;
+    if (devices.isEmpty) {
+      await _toast('No USB printer found. Connect via OTG and allow access.');
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _card,
+        title:
+            const Text('USB printers', style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: devices
+                .map((d) => ListTile(
+                      title: Text(d.name ?? 'USB printer',
+                          style: const TextStyle(color: Colors.white)),
+                      subtitle: Text(usbAddress(d),
+                          style: const TextStyle(color: Colors.white54)),
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        await _m.addPrinter(PrinterConfig(
+                          id: _newId(),
+                          name: (d.name == null || d.name!.isEmpty)
+                              ? 'USB printer'
+                              : d.name!,
+                          transport: PrinterTransport.usb,
+                          address: usbAddress(d),
                         ));
                       },
                     ))

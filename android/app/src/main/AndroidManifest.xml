@@ -9,6 +9,8 @@
         android:maxSdkVersion="32" />
     <!-- Camera is optional so the app installs on camera-less devices -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- USB-host (OTG) thermal printers -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <!-- Bluetooth thermal printers (Android 12+ runtime perms + legacy) -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />

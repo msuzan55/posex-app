@@ -64,13 +64,15 @@ class WebViewScreen extends StatefulWidget {
 }
 
 class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserver {
-  late final WebViewController _controller;
-  late final PrinterManager _printerManager;
-  late final PrintHttpServer _printServer;
+  WebViewController? _controller;
+  PrinterManager? _printerManager;
+  PrintHttpServer? _printServer;
   final UpdateService _updateService = UpdateService();
 
   bool _loading = true;
-  bool _showPrintFab = true; // visible for 5s on launch, then hidden
+  bool _webReady = false;
+  bool _showPrintFab = true;
+  String? _bootstrapError;
   Timer? _fabTimer;
   Timer? _probeTimer;
   UpdateInfo? _update;
@@ -82,12 +84,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _printerManager = PrinterManager(PrinterStore());
-    _printServer = PrintHttpServer(_printerManager);
-    _bootstrap();
     _initWebView();
+    _bootstrap();
 
-    // Printer button bottom-right for 5s on open, then fully hidden.
     _fabTimer = Timer(const Duration(seconds: 5), () {
       if (mounted) setState(() => _showPrintFab = false);
     });
@@ -112,16 +111,43 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   Future<void> _bootstrap() async {
-    await _requestPermissions();
-    await DeviceInfoService.deviceName();
-    await PushRegistrationService.init();
-    await _printServer.start(); // auto-start on launch
-    await _printerManager.init(); // load + auto-reconnect saved printers
-    await PrintForegroundService.start(); // keep printing alive in background
-    _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      _printerManager.reconnectAll();
-    });
-    _checkForUpdate();
+    try {
+      await _requestPermissions();
+
+      final manager = PrinterManager(PrinterStore());
+      final server = PrintHttpServer(manager);
+      _printerManager = manager;
+      _printServer = server;
+
+      await DeviceInfoService.deviceName();
+
+      unawaited(PushRegistrationService.init());
+
+      final printStarted = await server.start();
+      if (!printStarted) {
+        _bootstrapError = 'Print server could not start on port ${PrintHttpServer.port}';
+      }
+
+      await manager.init();
+
+      // Notification permission before foreground service (Android 13+).
+      final notif = await Permission.notification.status;
+      if (notif.isGranted) {
+        await PrintForegroundService.start();
+      }
+
+      _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+        manager.reconnectAll();
+      });
+    } catch (e, st) {
+      debugPrint('[PosEx] bootstrap error: $e\n$st');
+      _bootstrapError ??= 'Startup error: $e';
+    } finally {
+      if (mounted) {
+        setState(() {});
+        _checkForUpdate();
+      }
+    }
   }
 
   Future<void> _checkForUpdate() async {
@@ -179,8 +205,16 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     if (info == null) return;
 
     if (_updateState == UpdateDownloadState.ready) {
+      setState(() => _updateError = null);
       try {
         await _updateService.installDownloadedApk();
+      } on PlatformException catch (e) {
+        if (mounted) {
+          setState(() {
+            _updateState = UpdateDownloadState.failed;
+            _updateError = e.message ?? 'Install failed';
+          });
+        }
       } catch (e) {
         if (mounted) {
           setState(() {
@@ -207,7 +241,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       case UpdateDownloadState.ready:
         return 'Update ready — tap to install now';
       case UpdateDownloadState.failed:
-        return _updateError == null
+        return _updateError == null || _updateError!.isEmpty
             ? 'Update failed — tap to retry'
             : 'Update failed — tap to retry';
       case UpdateDownloadState.idle:
@@ -249,6 +283,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
             if (mounted) setState(() => _loading = false);
             _syncAuthTokenFromWebView();
           },
+          onWebResourceError: (error) {
+            debugPrint('[WebView] ${error.errorCode} ${error.description}');
+          },
         ),
       )
       ..loadRequest(Uri.parse(kPosexUrl));
@@ -256,18 +293,21 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     final platform = controller.platform;
     if (platform is AndroidWebViewController) {
       platform.setMediaPlaybackRequiresUserGesture(false);
-      // Reach the embedded http://localhost:9753 server from the HTTPS page.
       platform.setMixedContentMode(MixedContentMode.alwaysAllow);
       platform.setOnShowFileSelector(_onShowFileSelector);
       platform.setOnPlatformPermissionRequest((request) => request.grant());
     }
 
     _controller = controller;
+    _webReady = true;
+    if (mounted) setState(() {});
   }
 
   Future<void> _syncAuthTokenFromWebView() async {
+    final controller = _controller;
+    if (controller == null) return;
     try {
-      await _controller.runJavaScript('''
+      await controller.runJavaScript('''
 (function(){
   function send(){
     try{
@@ -301,11 +341,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   void _openPrintPanel() {
+    final manager = _printerManager;
+    final server = _printServer;
+    if (manager == null || server == null) return;
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PrintServerPanel(
-          manager: _printerManager,
-          server: _printServer,
+          manager: manager,
+          server: server,
         ),
       ),
     );
@@ -313,12 +356,13 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) {
+    final controller = _controller;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
-        if (await _controller.canGoBack()) {
-          _controller.goBack();
+        if (controller != null && await controller.canGoBack()) {
+          controller.goBack();
         } else {
           await SystemNavigator.pop();
         }
@@ -328,7 +372,12 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         body: SafeArea(
           child: Stack(
             children: [
-              WebViewWidget(controller: _controller),
+              if (controller != null && _webReady)
+                WebViewWidget(controller: controller)
+              else
+                const Center(
+                  child: CircularProgressIndicator(color: Color(0xFFF97316)),
+                ),
               if (_loading)
                 const Center(
                   child: CircularProgressIndicator(color: Color(0xFFF97316)),
@@ -379,6 +428,18 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                                       style: TextStyle(
                                         color: Colors.white.withValues(alpha: 0.9),
                                         fontSize: 12,
+                                      ),
+                                    ),
+                                  if (_updateError != null &&
+                                      _updateError!.isNotEmpty &&
+                                      _updateState == UpdateDownloadState.failed)
+                                    Text(
+                                      _updateError!,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: Colors.white.withValues(alpha: 0.95),
+                                        fontSize: 11,
                                       ),
                                     ),
                                 ],

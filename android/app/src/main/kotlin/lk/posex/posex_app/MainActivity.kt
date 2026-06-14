@@ -1,6 +1,7 @@
 package lk.posex.posex_app
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -23,8 +24,12 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "startForeground" -> {
-                        startPrintForegroundService()
-                        result.success(null)
+                        try {
+                            startPrintForegroundService()
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
                     }
                     "stopForeground" -> {
                         stopService(Intent(this, PrintForegroundService::class.java))
@@ -82,7 +87,7 @@ class MainActivity : FlutterActivity() {
 
     private fun installApk(path: String) {
         val file = File(path)
-        if (!file.exists() || file.length() < 1024) {
+        if (!file.exists() || file.length() < 4096) {
             throw IllegalStateException("Update file not found or incomplete")
         }
 
@@ -97,6 +102,24 @@ class MainActivity : FlutterActivity() {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+
+        // Grant read permission to every app that can handle the install intent
+        // (required on Samsung/Xiaomi and Android 11+ package visibility).
+        val handlers = packageManager.queryIntentActivities(
+            intent,
+            PackageManager.MATCH_DEFAULT_ONLY,
+        )
+        if (handlers.isEmpty()) {
+            throw IllegalStateException("No app can install APK on this device")
+        }
+        for (resolveInfo in handlers) {
+            grantUriPermission(
+                resolveInfo.activityInfo.packageName,
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+
         startActivity(intent)
     }
 

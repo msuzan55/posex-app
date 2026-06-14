@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
@@ -31,9 +32,16 @@ class PrintHttpServer {
   Future<bool> start() async {
     if (_server != null) return true;
     try {
-      _server = await shelf_io.serve(_handler, InternetAddress.anyIPv4, port);
+      // Bind to loopback only — WebView calls http://127.0.0.1:9753
+      _server = await shelf_io.serve(
+        _handler,
+        InternetAddress.loopbackIPv4,
+        port,
+        shared: true,
+      );
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[PrintServer] start failed: $e');
       _server = null;
       return false;
     }

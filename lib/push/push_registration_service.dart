@@ -30,6 +30,11 @@ class PushRegistrationService {
     if (_initialized) return;
     _initialized = true;
 
+    if (DefaultFirebaseOptions.android.appId.contains('placeholder')) {
+      debugPrint('[Push] Firebase skipped — configure google-services / app id');
+      return;
+    }
+
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     } catch (e) {

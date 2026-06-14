@@ -13,11 +13,13 @@ class UpdateInfo {
     required this.latestBuild,
     required this.versionLabel,
     required this.apkUrl,
+    this.assetId,
   });
 
   final int latestBuild;
   final String versionLabel;
   final String apkUrl;
+  final int? assetId;
 }
 
 enum UpdateDownloadState {
@@ -53,10 +55,16 @@ class UpdateService {
       final res = await http
           .get(
             Uri.parse(_latestReleaseApi),
-            headers: {'Accept': 'application/vnd.github+json'},
+            headers: const {
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': 'PosEx-Android-Updater',
+            },
           )
-          .timeout(const Duration(seconds: 15));
-      if (res.statusCode != 200) return null;
+          .timeout(const Duration(seconds: 20));
+      if (res.statusCode != 200) {
+        lastError = 'Update check failed (${res.statusCode})';
+        return null;
+      }
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final tag = (data['tag_name'] ?? '') as String;
@@ -65,14 +73,19 @@ class UpdateService {
 
       final assets = (data['assets'] as List?) ?? const [];
       String? apkUrl;
+      int? assetId;
       for (final a in assets.cast<Map<String, dynamic>>()) {
         final name = (a['name'] ?? '') as String;
         if (name.toLowerCase().endsWith('.apk')) {
           apkUrl = a['browser_download_url'] as String?;
+          assetId = int.tryParse('${a['id']}');
           break;
         }
       }
-      if (apkUrl == null) return null;
+      if (apkUrl == null) {
+        lastError = 'No APK found in latest GitHub release';
+        return null;
+      }
 
       return UpdateInfo(
         latestBuild: latestBuild,
@@ -80,19 +93,18 @@ class UpdateService {
             ? data['name'] as String
             : tag,
         apkUrl: apkUrl,
+        assetId: assetId,
       );
-    } catch (_) {
+    } catch (e) {
+      lastError = e.toString();
       return null;
     }
   }
 
+  /// Cache dir is exposed via FileProvider `cache-path` (required for install).
   Future<File> apkFile() async {
-    final dir = await getApplicationSupportDirectory();
-    final updatesDir = Directory('${dir.path}/updates');
-    if (!await updatesDir.exists()) {
-      await updatesDir.create(recursive: true);
-    }
-    return File('${updatesDir.path}/$_apkFileName');
+    final dir = await getTemporaryDirectory();
+    return File('${dir.path}/$_apkFileName');
   }
 
   Future<bool> isDownloadReady(UpdateInfo info) async {
@@ -100,10 +112,27 @@ class UpdateService {
     final savedBuild = prefs.getInt(_prefDownloadedBuild) ?? 0;
     if (savedBuild != info.latestBuild) return false;
     final file = await apkFile();
-    return file.existsSync() && file.lengthSync() > 4096;
+    return _isValidApk(file);
   }
 
-  /// Download APK to app storage. Safe to call multiple times.
+  bool _isValidApk(File file) {
+    if (!file.existsSync()) return false;
+    if (file.lengthSync() < 4096) return false;
+    try {
+      final raf = file.openSync(mode: FileMode.read);
+      final header = raf.readSync(4);
+      raf.closeSync();
+      return header.length == 4 &&
+          header[0] == 0x50 &&
+          header[1] == 0x4b &&
+          header[2] == 0x03 &&
+          header[3] == 0x04;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Download APK to app cache. Safe to call multiple times.
   Future<void> downloadUpdate(
     UpdateInfo info, {
     void Function(double progress)? onProgress,
@@ -115,20 +144,32 @@ class UpdateService {
     lastError = null;
 
     final file = await apkFile();
-    if (file.existsSync()) {
-      await file.delete();
-    }
+    final partial = File('${file.path}.part');
+    if (file.existsSync()) await file.delete();
+    if (partial.existsSync()) await partial.delete();
 
     final client = http.Client();
     try {
-      final resp = await client.send(http.Request('GET', Uri.parse(info.apkUrl)));
+      final uri = info.assetId != null
+          ? Uri.parse(
+              'https://api.github.com/repos/msuzan55/posex-app/releases/assets/${info.assetId}',
+            )
+          : Uri.parse(info.apkUrl);
+
+      final request = http.Request('GET', uri);
+      request.headers.addAll(const {
+        'Accept': 'application/octet-stream',
+        'User-Agent': 'PosEx-Android-Updater',
+      });
+
+      final resp = await client.send(request).timeout(const Duration(minutes: 10));
       if (resp.statusCode != 200) {
         throw Exception('Download failed (${resp.statusCode})');
       }
 
       final total = resp.contentLength ?? 0;
       var received = 0;
-      final sink = file.openWrite();
+      final sink = partial.openWrite();
       await for (final chunk in resp.stream) {
         received += chunk.length;
         sink.add(chunk);
@@ -140,8 +181,14 @@ class UpdateService {
       await sink.flush();
       await sink.close();
 
-      if (!file.existsSync() || file.lengthSync() < 4096) {
+      if (!partial.existsSync() || partial.lengthSync() < 4096) {
         throw Exception('Downloaded file is incomplete');
+      }
+
+      await partial.rename(file.path);
+      if (!_isValidApk(file)) {
+        await file.delete();
+        throw Exception('Downloaded file is not a valid APK');
       }
 
       final prefs = await SharedPreferences.getInstance();
@@ -150,10 +197,9 @@ class UpdateService {
       downloadProgress = 1;
     } catch (e) {
       state = UpdateDownloadState.failed;
-      lastError = e.toString();
-      if (file.existsSync()) {
-        await file.delete();
-      }
+      lastError = e.toString().replaceFirst('Exception: ', '');
+      if (partial.existsSync()) await partial.delete();
+      if (file.existsSync()) await file.delete();
       rethrow;
     } finally {
       client.close();
@@ -167,8 +213,8 @@ class UpdateService {
     }
 
     final file = await apkFile();
-    if (!file.existsSync()) {
-      throw Exception('Update file missing — download again');
+    if (!_isValidApk(file)) {
+      throw Exception('Update file missing or corrupt — download again');
     }
 
     final canInstall =
@@ -177,18 +223,21 @@ class UpdateService {
     if (!canInstall) {
       await _installChannel.invokeMethod<void>('openInstallPermissionSettings');
       throw Exception(
-        'Allow PosEx to install updates (Unknown apps), then tap Update again.',
+        'Allow PosEx to install updates, then tap the banner again.',
       );
     }
 
-    await _installChannel.invokeMethod<void>('installApk', {
+    final result = await _installChannel.invokeMethod<bool>('installApk', {
       'path': file.path,
     });
+    if (result != true) {
+      throw Exception('Could not open the Android installer');
+    }
   }
 
   int _parseBuildNumber(String tag) {
-    // Prefer explicit build-123 tags from CI.
-    final buildMatch = RegExp(r'build-(\d+)', caseSensitive: false).firstMatch(tag);
+    final buildMatch =
+        RegExp(r'build-(\d+)', caseSensitive: false).firstMatch(tag);
     if (buildMatch != null) {
       return int.tryParse(buildMatch.group(1)!) ?? 0;
     }

@@ -11,6 +11,7 @@ import 'print_server/print_http_server.dart';
 import 'print_server/print_server_panel.dart';
 import 'print_server/printer_manager.dart';
 import 'print_server/printer_store.dart';
+import 'update/update_service.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
 /// embedded localhost print server (USB/Bluetooth/Network) on :9753.
@@ -63,10 +64,13 @@ class _WebViewScreenState extends State<WebViewScreen> {
   late final WebViewController _controller;
   late final PrinterManager _printerManager;
   late final PrintHttpServer _printServer;
+  final UpdateService _updateService = UpdateService();
 
   bool _loading = true;
   bool _fabProminent = true; // brighter for the first 5s
   Timer? _fabTimer;
+  UpdateInfo? _update;
+  double? _downloadProgress;
 
   @override
   void initState() {
@@ -93,6 +97,29 @@ class _WebViewScreenState extends State<WebViewScreen> {
     await _requestPermissions();
     await _printServer.start(); // auto-start on launch
     await _printerManager.init(); // load + auto-reconnect saved printers
+    _checkForUpdate();
+  }
+
+  Future<void> _checkForUpdate() async {
+    final info = await _updateService.checkForUpdate();
+    if (mounted && info != null) setState(() => _update = info);
+  }
+
+  Future<void> _runUpdate() async {
+    final info = _update;
+    if (info == null || _downloadProgress != null) return;
+    setState(() => _downloadProgress = 0);
+    try {
+      await _updateService.downloadAndInstall(
+        info.apkUrl,
+        onProgress: (p) {
+          if (mounted) setState(() => _downloadProgress = p);
+        },
+      );
+    } catch (_) {
+      // ignored — banner stays so the user can retry
+    }
+    if (mounted) setState(() => _downloadProgress = null);
   }
 
   /// Camera + photo/storage so product-photo capture and gallery upload work.
@@ -179,6 +206,46 @@ class _WebViewScreenState extends State<WebViewScreen> {
               if (_loading)
                 const Center(
                   child: CircularProgressIndicator(color: Color(0xFFF97316)),
+                ),
+              // Update banner, top.
+              if (_update != null)
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: Material(
+                    color: const Color(0xFFF97316),
+                    child: InkWell(
+                      onTap: _downloadProgress == null ? _runUpdate : null,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.system_update,
+                                color: Colors.white, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                _downloadProgress == null
+                                    ? 'Update available — tap to install'
+                                    : 'Downloading update… ${(_downloadProgress! * 100).toStringAsFixed(0)}%',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            if (_downloadProgress == null)
+                              GestureDetector(
+                                onTap: () => setState(() => _update = null),
+                                child: const Icon(Icons.close,
+                                    color: Colors.white, size: 20),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               // Print-server button, bottom-right.
               Positioned(

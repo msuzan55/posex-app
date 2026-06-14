@@ -35,6 +35,8 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
     needs: analyze-and-test
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -52,7 +54,9 @@ jobs:
         run: flutter pub get
 
       - name: Build release APK
-        run: flutter build apk --release
+        # build-number = run number → ever-increasing versionCode so the app
+        # (and Android) treat each build as a real update.
+        run: flutter build apk --release --build-number=${{ github.run_number }}
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -60,3 +64,13 @@ jobs:
           name: posex-app-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release (for in-app update)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: PosEx build ${{ github.run_number }}
+          files: build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

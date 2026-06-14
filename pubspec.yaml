@@ -2,7 +2,7 @@ name: posex_app
 description: PosEx mobile app — offline-first POS for Sri Lankan retail.
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.12.2
@@ -19,11 +19,25 @@ dependencies:
   shared_preferences: ^2.3.3
   print_bluetooth_thermal: ^1.1.0
   flutter_thermal_printer: ^0.0.9
+  # In-app update (check GitHub release, download + install APK)
+  package_info_plus: ^8.0.2
+  http: ^1.2.2
+  open_filex: ^4.5.0
+  path_provider: ^2.1.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/icon/app_icon.png"

@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'platform/app_permissions.dart';
@@ -321,7 +320,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       onLoadingChanged: (loading) {
         if (mounted) setState(() => _loading = loading);
       },
-      onShowFileSelector: _onShowFileSelector,
     );
     _webView = webView;
     unawaited(() async {
@@ -405,19 +403,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         'window.dispatchEvent(new CustomEvent("posexNativePushStatus",{detail:{enabled:${status.enabled ? 'true' : 'false'},native:true,permissionGranted:${status.permissionGranted ? 'true' : 'false'},registered:${status.registeredWithServer ? 'true' : 'false'},hasFcmToken:${status.hasFcmToken ? 'true' : 'false'},error:$errJs}}));',
       );
     } catch (_) {}
-  }
-
-  Future<List<String>> _onShowFileSelector(WebFileSelectorParams params) async {
-    final picker = ImagePicker();
-    final source =
-        params.isCaptureEnabled ? ImageSource.camera : ImageSource.gallery;
-    try {
-      final XFile? image = await picker.pickImage(source: source);
-      if (image == null) return <String>[];
-      return <String>[Uri.file(image.path).toString()];
-    } catch (_) {
-      return <String>[];
-    }
   }
 
   void _openPrintPanel() {

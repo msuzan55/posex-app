@@ -81,6 +81,16 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/posex_file_paths" />
         </provider>
+        <!-- WebView file/camera uploads -->
+        <provider
+            android:name="com.pichillilorenzo.flutter_inappwebview_android.InAppWebViewFileProvider"
+            android:authorities="${applicationId}.flutter_inappwebview_android.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/inappwebview_provider_paths" />
+        </provider>
         <service
             android:name=".PrintForegroundService"
             android:exported="false"

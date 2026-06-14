@@ -1,14 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
-
-class WebFileSelectorParams {
-  WebFileSelectorParams({required this.isCaptureEnabled});
-
-  final bool isCaptureEnabled;
-}
 
 /// Cross-platform WebView wrapper via flutter_inappwebview.
 class PosexWebViewController {
@@ -16,23 +9,18 @@ class PosexWebViewController {
     required this.onBridgeMessage,
     required this.onPageFinished,
     required this.onLoadingChanged,
-    required this.onShowFileSelector,
   });
 
   final void Function(String message) onBridgeMessage;
   final VoidCallback onPageFinished;
   final void Function(bool loading) onLoadingChanged;
-  final Future<List<String>> Function(WebFileSelectorParams params)
-      onShowFileSelector;
 
   InAppWebViewController? _controller;
   bool _canGoBack = false;
   bool _ready = false;
   String? _initialUrl;
 
-  bool get isReady {
-    return _ready;
-  }
+  bool get isReady => _ready;
 
   Future<void> initialize(String initialUrl) async {
     _initialUrl = initialUrl;
@@ -54,7 +42,7 @@ class PosexWebViewController {
         supportZoom: false,
         transparentBackground: false,
       ),
-      initialUserScripts: UnmodifiableListView<UserScript>([
+      initialUserScripts: [
         UserScript(
           source: '''
 window.PosExNativeBridge = window.PosExNativeBridge || {
@@ -65,7 +53,7 @@ window.PosExNativeBridge = window.PosExNativeBridge || {
 ''',
           injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
         ),
-      ]),
+      ],
       onWebViewCreated: (controller) {
         _controller = controller;
         controller.addJavaScriptHandler(
@@ -76,41 +64,31 @@ window.PosExNativeBridge = window.PosExNativeBridge || {
           },
         );
       },
-      onLoadStart: (_, __) => onLoadingChanged(true),
-      onLoadStop: (_, __) async {
+      onLoadStart: (controller, url) => onLoadingChanged(true),
+      onLoadStop: (controller, url) {
         onLoadingChanged(false);
-        _canGoBack = await _controller?.canGoBack() ?? false;
+        unawaited(_refreshCanGoBack());
         onPageFinished();
       },
-      onReceivedError: (_, request, error) {
+      onReceivedError: (controller, request, error) {
         if (request.isForMainFrame ?? false) {
-          debugPrint('[WebView] ${error.code} ${error.description}');
+          debugPrint('[WebView] ${error.type} ${error.description}');
         }
       },
-      onPermissionRequest: (_, request) async {
+      onPermissionRequest: (controller, request) async {
         return PermissionResponse(
           resources: request.resources,
           action: PermissionResponseAction.GRANT,
         );
       },
-      androidOnShowFileChooser: (_, params) async {
-        final files = await onShowFileSelector(
-          WebFileSelectorParams(isCaptureEnabled: params.isCaptureEnabled),
-        );
-        return FileChooserResponse(
-          filePaths: files
-              .map((f) {
-                if (f.startsWith('file://')) return f.substring(7);
-                return f;
-              })
-              .toList(),
-          handledByClient: true,
-        );
-      },
-      onUpdateVisitedHistory: (_, __, ___, ____) async {
-        _canGoBack = await _controller?.canGoBack() ?? false;
+      onUpdateVisitedHistory: (controller, url, isReload) {
+        unawaited(_refreshCanGoBack());
       },
     );
+  }
+
+  Future<void> _refreshCanGoBack() async {
+    _canGoBack = await _controller?.canGoBack() ?? false;
   }
 
   Future<void> runJavaScript(String js) async {

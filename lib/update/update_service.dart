@@ -159,17 +159,36 @@ class UpdateService {
     return File('${dir.path}/$name');
   }
 
+  Future<File> _windowsSetupFile() async {
+    final dir = await getTemporaryDirectory();
+    return File('${dir.path}/$_windowsSetupFileName');
+  }
+
   Future<bool> isDownloadReady(UpdateInfo info) async {
     final prefs = await SharedPreferences.getInstance();
     final savedBuild = prefs.getInt(_prefDownloadedBuild) ?? 0;
     if (savedBuild != info.latestBuild) return false;
+
+    if (_isWindows) {
+      final setupFile = await _windowsSetupFile();
+      if (info.isWindowsSetup) {
+        return _isValidSetupExe(setupFile);
+      }
+      if (_isValidSetupExe(setupFile)) {
+        return true;
+      }
+      final zipFile = await _updateFile(
+        UpdateInfo(
+          latestBuild: info.latestBuild,
+          versionLabel: info.versionLabel,
+          downloadUrl: info.downloadUrl,
+          isWindowsZip: true,
+        ),
+      );
+      return _isValidZip(zipFile) && await _windowsExeFromDownload() != null;
+    }
+
     final file = await _updateFile(info);
-    if (info.isWindowsSetup) {
-      return _isValidSetupExe(file);
-    }
-    if (info.isWindowsZip) {
-      return _isValidZip(file) && await _windowsExeFromDownload() != null;
-    }
     return _isValidApk(file);
   }
 
@@ -299,22 +318,35 @@ class UpdateService {
   }
 
   /// Install the downloaded update for the current platform.
-  Future<void> installDownloadedUpdate() async {
+  ///
+  /// Pass [info] on Windows so a missing Setup.exe can be re-downloaded before install.
+  Future<void> installDownloadedUpdate({UpdateInfo? info}) async {
     if (Platform.isAndroid) {
       await installDownloadedApk();
       return;
     }
     if (Platform.isWindows) {
-      final prefs = await SharedPreferences.getInstance();
-      final useSetup = prefs.getBool(_prefDownloadedSetup) ?? false;
-      if (useSetup) {
-        await installDownloadedWindowsSetup();
-      } else {
-        await installDownloadedWindowsBuild();
-      }
+      await _installDownloadedWindowsUpdate(info);
       return;
     }
     throw Exception('Updates are supported on Android and Windows only');
+  }
+
+  Future<void> _installDownloadedWindowsUpdate(UpdateInfo? info) async {
+    var setupFile = await _windowsSetupFile();
+    if (!_isValidSetupExe(setupFile) &&
+        info != null &&
+        (info.isWindowsSetup || info.downloadUrl.isNotEmpty)) {
+      await downloadUpdate(info);
+      setupFile = await _windowsSetupFile();
+    }
+
+    if (_isValidSetupExe(setupFile)) {
+      await installDownloadedWindowsSetup();
+      return;
+    }
+
+    await installDownloadedWindowsBuild();
   }
 
   /// Launch Android package installer for the downloaded APK.
@@ -441,23 +473,22 @@ class UpdateService {
       throw Exception('Windows installer is supported on Windows only');
     }
 
-    final file = await _updateFile(
-      UpdateInfo(
-        latestBuild: 0,
-        versionLabel: '',
-        downloadUrl: '',
-        isWindowsZip: false,
-        isWindowsSetup: true,
-      ),
-    );
+    final file = await _windowsSetupFile();
     if (!_isValidSetupExe(file)) {
       throw Exception('Installer missing or corrupt — download again');
     }
 
+    // Launch Inno Setup directly — never via cmd.exe (avoids a visible command window).
     await Process.start(
       file.path,
-      ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
+      [
+        '/SILENT',
+        '/SUPPRESSMSGBOXES',
+        '/NORESTART',
+        '/CLOSEAPPLICATIONS',
+      ],
       mode: ProcessStartMode.detached,
+      runInShell: false,
     );
     exit(0);
   }

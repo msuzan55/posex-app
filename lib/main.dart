@@ -282,7 +282,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     if (_updateState == UpdateDownloadState.ready) {
       setState(() => _updateError = null);
       try {
-        await _updateService.installDownloadedUpdate();
+        await _updateService.installDownloadedUpdate(info: info);
       } on PlatformException catch (e) {
         if (mounted) {
           setState(() {

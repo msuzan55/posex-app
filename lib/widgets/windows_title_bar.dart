@@ -133,6 +133,20 @@ class _WindowsTitleBarState extends State<WindowsTitleBar> {
           value: 'update',
           child: Text(widget.updateReady ? 'Install update now' : 'Check for updates'),
         ),
+        PopupMenuItem(
+          value: 'startup',
+          child: Row(
+            children: [
+              Icon(
+                _startOnStartup ? Icons.check_box : Icons.check_box_outline_blank,
+                color: _startOnStartup ? _accent : Colors.white54,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              const Text('Start on startup'),
+            ],
+          ),
+        ),
         const PopupMenuItem(
           value: 'clear',
           child: Text('Clear all offline data', style: TextStyle(color: Colors.redAccent)),
@@ -149,6 +163,10 @@ class _WindowsTitleBarState extends State<WindowsTitleBar> {
         } else {
           await widget.onCheckForUpdate?.call();
         }
+      case 'startup':
+        final next = !_startOnStartup;
+        setState(() => _startOnStartup = next);
+        await WindowsShellService.setStartOnStartup(next);
       case 'clear':
         await _confirmClearData();
     }
@@ -184,21 +202,6 @@ class _WindowsTitleBarState extends State<WindowsTitleBar> {
               ),
             ],
             const Spacer(),
-            Switch(
-              value: _startOnStartup,
-              activeTrackColor: _accent.withValues(alpha: 0.45),
-              thumbColor: WidgetStateProperty.resolveWith(
-                (states) => states.contains(WidgetState.selected)
-                    ? _accent
-                    : Colors.white54,
-              ),
-              onChanged: (v) async {
-                setState(() => _startOnStartup = v);
-                await WindowsShellService.setStartOnStartup(v);
-              },
-            ),
-            const Text('Start on startup', style: TextStyle(color: Colors.white70, fontSize: 11)),
-            const SizedBox(width: 8),
             IconButton(
               tooltip: 'Menu',
               padding: EdgeInsets.zero,

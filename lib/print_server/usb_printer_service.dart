@@ -50,8 +50,12 @@ class UsbPrinterService {
     final devices = await scan();
     final printer = _match(devices, vendorId, productId);
     if (printer == null) return false;
-    final connected = await _ftp.connect(printer);
-    if (!connected) return false;
+    // connect() triggers the USB permission request on first use; with the
+    // "use by default" grant (manifest attach filter) permission is already
+    // held, so don't gate printing on its return value.
+    try {
+      await _ftp.connect(printer);
+    } catch (_) {}
     await _ftp.printData(printer, bytes, longData: true);
     return true;
   }

@@ -271,6 +271,11 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
           final text = message.message;
           if (text.startsWith('auth:')) {
             PushRegistrationService.setAuthToken(text.substring(5));
+            _reportNativePushStatus();
+          } else if (text == 'push:enable') {
+            _enableNativePush();
+          } else if (text == 'push:status') {
+            _reportNativePushStatus();
           }
         },
       )
@@ -282,6 +287,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
           onPageFinished: (_) {
             if (mounted) setState(() => _loading = false);
             _syncAuthTokenFromWebView();
+            _reportNativePushStatus();
           },
           onWebResourceError: (error) {
             debugPrint('[WebView] ${error.errorCode} ${error.description}');
@@ -324,6 +330,22 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 })();
 ''');
+    } catch (_) {}
+  }
+
+  Future<void> _enableNativePush() async {
+    final enabled = await PushRegistrationService.enableFromUser();
+    await _reportNativePushStatus(enabled: enabled);
+  }
+
+  Future<void> _reportNativePushStatus({bool? enabled}) async {
+    final controller = _controller;
+    if (controller == null) return;
+    final ok = enabled ?? await PushRegistrationService.queryStatus();
+    try {
+      await controller.runJavaScript(
+        'window.dispatchEvent(new CustomEvent("posexNativePushStatus",{detail:{enabled:${ok ? 'true' : 'false'},native:true}}));',
+      );
     } catch (_) {}
   }
 

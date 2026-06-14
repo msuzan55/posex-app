@@ -25,6 +25,9 @@ class PushRegistrationService {
       FlutterLocalNotificationsPlugin();
   static bool _initialized = false;
   static String? _authToken;
+  static bool _registeredWithServer = false;
+
+  static bool get isRegisteredWithServer => _registeredWithServer;
 
   static Future<void> init() async {
     if (_initialized) return;
@@ -87,15 +90,43 @@ class PushRegistrationService {
         },
         body: jsonEncode({
           'token': token,
-          'pwaBasePath': '/app/',
+          'pwaBasePath': '/test/',
           'endpointHint': endpoint,
         }),
       );
       if (res.statusCode >= 400) {
         debugPrint('[Push] register failed: ${res.statusCode} ${res.body}');
+        _registeredWithServer = false;
+      } else {
+        _registeredWithServer = true;
       }
     } catch (e) {
       debugPrint('[Push] register error: $e');
+      _registeredWithServer = false;
+    }
+  }
+
+  /// Called from WebView bridge when user taps Enable in Settings.
+  static Future<bool> enableFromUser() async {
+    await init();
+    final settings = await FirebaseMessaging.instance.getNotificationSettings();
+    final granted = settings.authorizationStatus == AuthorizationStatus.authorized ||
+        settings.authorizationStatus == AuthorizationStatus.provisional;
+    if (!granted) return false;
+    final token = await FirebaseMessaging.instance.getToken();
+    if (token != null) await _registerToken(token);
+    return _registeredWithServer || token != null;
+  }
+
+  static Future<bool> queryStatus() async {
+    if (DefaultFirebaseOptions.android.appId.contains('placeholder')) return false;
+    try {
+      final settings = await FirebaseMessaging.instance.getNotificationSettings();
+      final granted = settings.authorizationStatus == AuthorizationStatus.authorized ||
+          settings.authorizationStatus == AuthorizationStatus.provisional;
+      return granted && (_registeredWithServer || (_authToken != null && await FirebaseMessaging.instance.getToken() != null));
+    } catch (_) {
+      return false;
     }
   }
 

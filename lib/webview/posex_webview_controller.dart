@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -42,7 +43,7 @@ class PosexWebViewController {
         supportZoom: false,
         transparentBackground: false,
       ),
-      initialUserScripts: [
+      initialUserScripts: UnmodifiableListView<UserScript>([
         UserScript(
           source: '''
 window.PosExNativeBridge = window.PosExNativeBridge || {
@@ -53,7 +54,7 @@ window.PosExNativeBridge = window.PosExNativeBridge || {
 ''',
           injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
         ),
-      ],
+      ]),
       onWebViewCreated: (controller) {
         _controller = controller;
         controller.addJavaScriptHandler(

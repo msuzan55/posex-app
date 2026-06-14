@@ -3,12 +3,11 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  file_selector_windows
   firebase_core
+  flutter_inappwebview_windows
   flutter_thermal_printer
   permission_handler_windows
   print_bluetooth_thermal
-  webview_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

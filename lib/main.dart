@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'platform/app_permissions.dart';
+import 'platform/windows_shell_service.dart';
 import 'print_server/device_info_service.dart';
 import 'print_server/print_foreground_service.dart';
 import 'print_server/print_http_server.dart';
@@ -16,6 +18,7 @@ import 'push/push_registration_service.dart';
 import 'update/update_service.dart';
 import 'update/windows_install_paths.dart';
 import 'webview/posex_webview_controller.dart';
+import 'widgets/windows_title_bar.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
 /// embedded localhost print server (USB/Bluetooth/Network) on :9753.
@@ -23,6 +26,21 @@ const String kPosexUrl = 'https://posex.lk/test/';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (Platform.isWindows) {
+    await windowManager.ensureInitialized();
+    const windowOptions = WindowOptions(
+      size: Size(1280, 720),
+      center: true,
+      title: 'PosEx',
+      titleBarStyle: TitleBarStyle.hidden,
+    );
+    windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+    await WindowsShellService.configureLaunchAtStartup();
+  }
 
   // Visible but transparent status bar (not full-screen / immersive).
   SystemChrome.setSystemUIOverlayStyle(
@@ -177,6 +195,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
       if (Platform.isWindows) {
         await WindowsInstallPaths.rememberCurrentInstallDir();
+        await WindowsShellService.ensureDefaultStartOnStartup();
       }
 
       unawaited(PushRegistrationService.init());
@@ -296,7 +315,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         return 'Downloading update… ${(_downloadProgress * 100).toStringAsFixed(0)}%';
       case UpdateDownloadState.ready:
         return Platform.isWindows
-            ? 'Update ready — tap to restart now'
+            ? 'Update ready — tap to install (PosEx-Setup.exe)'
             : 'Update ready — tap to install now';
       case UpdateDownloadState.failed:
         return _updateError == null || _updateError!.isEmpty
@@ -441,6 +460,158 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     );
   }
 
+  Widget _buildBodyStack(PosexWebViewController? webView, double bottomInset) {
+    return Stack(
+      children: [
+        if (webView != null && _webReady && webView.isReady)
+          webView.buildWidget()
+        else
+          const Center(
+            child: CircularProgressIndicator(color: Color(0xFFF97316)),
+          ),
+        if (_loading)
+          const Center(
+            child: CircularProgressIndicator(color: Color(0xFFF97316)),
+          ),
+        if (_bootstrapError != null)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Material(
+              color: const Color(0xFFB91C1C),
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  _bootstrapError!,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+        if (_update != null)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Material(
+              color: _updateState == UpdateDownloadState.ready
+                  ? const Color(0xFF059669)
+                  : const Color(0xFFF97316),
+              child: InkWell(
+                onTap: _updateState == UpdateDownloadState.downloading
+                    ? null
+                    : _runUpdate,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _updateState == UpdateDownloadState.ready
+                            ? (Platform.isWindows
+                                ? Icons.system_update_alt
+                                : Icons.install_mobile)
+                            : Icons.system_update,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _updateBannerText(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (_update!.versionLabel.isNotEmpty)
+                              Text(
+                                _update!.versionLabel,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.9),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            if (_updateError != null &&
+                                _updateError!.isNotEmpty &&
+                                _updateState == UpdateDownloadState.failed)
+                              Text(
+                                _updateError!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.95),
+                                  fontSize: 11,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      if (_updateState == UpdateDownloadState.downloading)
+                        SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            value: _downloadProgress > 0
+                                ? _downloadProgress
+                                : null,
+                            color: Colors.white,
+                          ),
+                        )
+                      else
+                        GestureDetector(
+                          onTap: () => setState(() => _update = null),
+                          child: const Icon(
+                            Icons.close,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        if (_showPrintFab)
+          Positioned(
+            right: 12,
+            bottom: bottomInset + 12,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _openPrintPanel,
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF97316),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.4),
+                        blurRadius: 8,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.print, color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final webView = _webView;
@@ -457,158 +628,22 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: SafeArea(
-          child: Stack(
-            children: [
-              if (webView != null && _webReady && webView.isReady)
-                webView.buildWidget()
-              else
-                const Center(
-                  child: CircularProgressIndicator(color: Color(0xFFF97316)),
-                ),
-              if (_loading)
-                const Center(
-                  child: CircularProgressIndicator(color: Color(0xFFF97316)),
-                ),
-              if (_bootstrapError != null)
-                Positioned(
-                  left: 16,
-                  right: 16,
-                  bottom: 16,
-                  child: Material(
-                    color: const Color(0xFFB91C1C),
-                    borderRadius: BorderRadius.circular(10),
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        _bootstrapError!,
-                        style: const TextStyle(color: Colors.white),
-                      ),
-                    ),
-                  ),
-                ),
-              // Update banner, top.
-              if (_update != null)
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: Material(
-                    color: _updateState == UpdateDownloadState.ready
-                        ? const Color(0xFF059669)
-                        : const Color(0xFFF97316),
-                    child: InkWell(
-                      onTap: _updateState == UpdateDownloadState.downloading
-                          ? null
-                          : _runUpdate,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              _updateState == UpdateDownloadState.ready
-                                  ? (Platform.isWindows
-                                      ? Icons.restart_alt
-                                      : Icons.install_mobile)
-                                  : Icons.system_update,
-                              color: Colors.white,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    _updateBannerText(),
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  if (_update!.versionLabel.isNotEmpty)
-                                    Text(
-                                      _update!.versionLabel,
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.9),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  if (_updateError != null &&
-                                      _updateError!.isNotEmpty &&
-                                      _updateState == UpdateDownloadState.failed)
-                                    Text(
-                                      _updateError!,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: Colors.white.withValues(alpha: 0.95),
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            if (_updateState == UpdateDownloadState.downloading)
-                              SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  value: _downloadProgress > 0
-                                      ? _downloadProgress
-                                      : null,
-                                  color: Colors.white,
-                                ),
-                              )
-                            else
-                              GestureDetector(
-                                onTap: () => setState(() => _update = null),
-                                child: const Icon(
-                                  Icons.close,
-                                  color: Colors.white,
-                                  size: 20,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              // Print-server button — bottom-right, first 5 seconds only.
-              if (_showPrintFab)
-                Positioned(
-                  right: 12,
-                  bottom: bottomInset + 12,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: _openPrintPanel,
-                      borderRadius: BorderRadius.circular(24),
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF97316),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.4),
-                              blurRadius: 8,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(Icons.print, color: Colors.white),
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
+        body: Column(
+          children: [
+            if (Platform.isWindows)
+              WindowsTitleBar(
+                updateService: _updateService,
+                updateReady: _update != null &&
+                    _updateState == UpdateDownloadState.ready,
+                onCheckForUpdate: _checkForUpdate,
+                onInstallUpdate: _runUpdate,
+              ),
+            Expanded(
+              child: Platform.isWindows
+                  ? _buildBodyStack(webView, bottomInset)
+                  : SafeArea(child: _buildBodyStack(webView, bottomInset)),
+            ),
+          ],
         ),
       ),
     );

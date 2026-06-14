@@ -18,6 +18,7 @@ class UpdateInfo {
     required this.downloadUrl,
     this.assetId,
     required this.isWindowsZip,
+    this.isWindowsSetup = false,
   });
 
   final int latestBuild;
@@ -25,6 +26,7 @@ class UpdateInfo {
   final String downloadUrl;
   final int? assetId;
   final bool isWindowsZip;
+  final bool isWindowsSetup;
 }
 
 enum UpdateDownloadState {
@@ -45,9 +47,11 @@ class UpdateService {
       'https://api.github.com/repos/msuzan55/posex-app/releases/latest';
   static const _apkFileName = 'posex-update.apk';
   static const _windowsZipFileName = 'posex-update-windows.zip';
+  static const _windowsSetupFileName = 'PosEx-Setup.exe';
   static const _windowsExtractDirName = 'posex-update-win';
   static const _windowsStageDirName = 'posex-update-stage';
   static const _prefDownloadedBuild = 'posex_downloaded_build';
+  static const _prefDownloadedSetup = 'posex_downloaded_setup';
 
   UpdateDownloadState state = UpdateDownloadState.idle;
   double downloadProgress = 0;
@@ -90,27 +94,42 @@ class UpdateService {
       String? downloadUrl;
       int? assetId;
       var isWindowsZip = false;
+      var isWindowsSetup = false;
 
-      for (final a in assets.cast<Map<String, dynamic>>()) {
-        final name = (a['name'] ?? '') as String;
-        final lower = name.toLowerCase();
-        if (_isWindows) {
-          if (lower.endsWith('.zip')) {
+      if (_isWindows) {
+        for (final a in assets.cast<Map<String, dynamic>>()) {
+          final name = ((a['name'] ?? '') as String).toLowerCase();
+          if (name == 'posex-setup.exe') {
             downloadUrl = a['browser_download_url'] as String?;
             assetId = int.tryParse('${a['id']}');
-            isWindowsZip = true;
+            isWindowsSetup = true;
             break;
           }
-        } else if (lower.endsWith('.apk')) {
-          downloadUrl = a['browser_download_url'] as String?;
-          assetId = int.tryParse('${a['id']}');
-          break;
+        }
+      }
+
+      if (downloadUrl == null) {
+        for (final a in assets.cast<Map<String, dynamic>>()) {
+          final name = (a['name'] ?? '') as String;
+          final lower = name.toLowerCase();
+          if (_isWindows) {
+            if (lower.endsWith('.zip')) {
+              downloadUrl = a['browser_download_url'] as String?;
+              assetId = int.tryParse('${a['id']}');
+              isWindowsZip = true;
+              break;
+            }
+          } else if (lower.endsWith('.apk')) {
+            downloadUrl = a['browser_download_url'] as String?;
+            assetId = int.tryParse('${a['id']}');
+            break;
+          }
         }
       }
 
       if (downloadUrl == null) {
         lastError = _isWindows
-            ? 'No Windows ZIP found in latest GitHub release'
+            ? 'No PosEx-Setup.exe or Windows ZIP found in latest GitHub release'
             : 'No APK found in latest GitHub release';
         return null;
       }
@@ -123,6 +142,7 @@ class UpdateService {
         downloadUrl: downloadUrl,
         assetId: assetId,
         isWindowsZip: isWindowsZip,
+        isWindowsSetup: isWindowsSetup,
       );
     } catch (e) {
       lastError = e.toString();
@@ -132,6 +152,9 @@ class UpdateService {
 
   Future<File> _updateFile(UpdateInfo info) async {
     final dir = await getTemporaryDirectory();
+    if (info.isWindowsSetup) {
+      return File('${dir.path}/$_windowsSetupFileName');
+    }
     final name = info.isWindowsZip ? _windowsZipFileName : _apkFileName;
     return File('${dir.path}/$name');
   }
@@ -141,10 +164,26 @@ class UpdateService {
     final savedBuild = prefs.getInt(_prefDownloadedBuild) ?? 0;
     if (savedBuild != info.latestBuild) return false;
     final file = await _updateFile(info);
+    if (info.isWindowsSetup) {
+      return _isValidSetupExe(file);
+    }
     if (info.isWindowsZip) {
       return _isValidZip(file) && await _windowsExeFromDownload() != null;
     }
     return _isValidApk(file);
+  }
+
+  bool _isValidSetupExe(File file) {
+    if (!file.existsSync()) return false;
+    if (file.lengthSync() < 65536) return false;
+    try {
+      final raf = file.openSync(mode: FileMode.read);
+      final header = raf.readSync(2);
+      raf.closeSync();
+      return header.length == 2 && header[0] == 0x4d && header[1] == 0x5a;
+    } catch (_) {
+      return false;
+    }
   }
 
   bool _isValidApk(File file) {
@@ -222,7 +261,12 @@ class UpdateService {
 
       await partial.rename(file.path);
 
-      if (info.isWindowsZip) {
+      if (info.isWindowsSetup) {
+        if (!_isValidSetupExe(file)) {
+          await file.delete();
+          throw Exception('Downloaded file is not a valid installer');
+        }
+      } else if (info.isWindowsZip) {
         if (!_isValidZip(file)) {
           await file.delete();
           throw Exception('Downloaded file is not a valid ZIP');
@@ -240,6 +284,7 @@ class UpdateService {
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt(_prefDownloadedBuild, info.latestBuild);
+      await prefs.setBool(_prefDownloadedSetup, info.isWindowsSetup);
       state = UpdateDownloadState.ready;
       downloadProgress = 1;
     } catch (e) {
@@ -260,7 +305,13 @@ class UpdateService {
       return;
     }
     if (Platform.isWindows) {
-      await installDownloadedWindowsBuild();
+      final prefs = await SharedPreferences.getInstance();
+      final useSetup = prefs.getBool(_prefDownloadedSetup) ?? false;
+      if (useSetup) {
+        await installDownloadedWindowsSetup();
+      } else {
+        await installDownloadedWindowsBuild();
+      }
       return;
     }
     throw Exception('Updates are supported on Android and Windows only');
@@ -382,6 +433,33 @@ class UpdateService {
 
     final stagedExe = File('${stageDir.path}/posex_app.exe');
     return stagedExe.existsSync() ? stageDir : null;
+  }
+
+  /// Run the downloaded PosEx-Setup.exe (upgrades in place; same AppId = no duplicate).
+  Future<void> installDownloadedWindowsSetup() async {
+    if (!Platform.isWindows) {
+      throw Exception('Windows installer is supported on Windows only');
+    }
+
+    final file = await _updateFile(
+      UpdateInfo(
+        latestBuild: 0,
+        versionLabel: '',
+        downloadUrl: '',
+        isWindowsZip: false,
+        isWindowsSetup: true,
+      ),
+    );
+    if (!_isValidSetupExe(file)) {
+      throw Exception('Installer missing or corrupt — download again');
+    }
+
+    await Process.start(
+      file.path,
+      ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
+      mode: ProcessStartMode.detached,
+    );
+    exit(0);
   }
 
   /// Launch in-place update: overwrite the install folder, then restart PosEx there.

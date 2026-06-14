@@ -24,19 +24,26 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\posex_app.exe
+DisableProgramGroupPage=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
+Name: "startup"; Description: "Start PosEx when Windows starts"; GroupDescription: "Startup:"; Flags: checkedonce
 
 [Files]
 Source: "{#ReleaseDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\PosEx"; Filename: "{app}\posex_app.exe"
+Name: "{autoprograms}\PosEx"; Filename: "{app}\posex_app.exe"
 Name: "{autodesktop}\PosEx"; Filename: "{app}\posex_app.exe"; Tasks: desktopicon
+Name: "{userstartup}\PosEx"; Filename: "{app}\posex_app.exe"; Tasks: startup
+
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "PosEx"; ValueData: """{app}\posex_app.exe"""; Tasks: startup; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\posex_app.exe"; Description: "Launch PosEx"; Flags: nowait postinstall skipifsilent

@@ -460,6 +460,91 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     );
   }
 
+  Widget _buildUpdateBanner() {
+    final update = _update;
+    if (update == null) return const SizedBox.shrink();
+
+    return Material(
+      color: _updateState == UpdateDownloadState.ready
+          ? const Color(0xFF059669)
+          : const Color(0xFFF97316),
+      child: InkWell(
+        onTap: _updateState == UpdateDownloadState.downloading ? null : _runUpdate,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 10,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                _updateState == UpdateDownloadState.ready
+                    ? Icons.install_mobile
+                    : Icons.system_update,
+                color: Colors.white,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _updateBannerText(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (update.versionLabel.isNotEmpty)
+                      Text(
+                        update.versionLabel,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.9),
+                          fontSize: 12,
+                        ),
+                      ),
+                    if (_updateError != null &&
+                        _updateError!.isNotEmpty &&
+                        _updateState == UpdateDownloadState.failed)
+                      Text(
+                        _updateError!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.95),
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (_updateState == UpdateDownloadState.downloading)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    value: _downloadProgress > 0 ? _downloadProgress : null,
+                    color: Colors.white,
+                  ),
+                )
+              else
+                GestureDetector(
+                  onTap: () => setState(() => _update = null),
+                  child: const Icon(
+                    Icons.close,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildBodyStack(PosexWebViewController? webView, double bottomInset) {
     return Stack(
       children: [
@@ -486,97 +571,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                 child: Text(
                   _bootstrapError!,
                   style: const TextStyle(color: Colors.white),
-                ),
-              ),
-            ),
-          ),
-        if (_update != null)
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: Material(
-              color: _updateState == UpdateDownloadState.ready
-                  ? const Color(0xFF059669)
-                  : const Color(0xFFF97316),
-              child: InkWell(
-                onTap: _updateState == UpdateDownloadState.downloading
-                    ? null
-                    : _runUpdate,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _updateState == UpdateDownloadState.ready
-                            ? (Platform.isWindows
-                                ? Icons.system_update_alt
-                                : Icons.install_mobile)
-                            : Icons.system_update,
-                        color: Colors.white,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _updateBannerText(),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            if (_update!.versionLabel.isNotEmpty)
-                              Text(
-                                _update!.versionLabel,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.9),
-                                  fontSize: 12,
-                                ),
-                              ),
-                            if (_updateError != null &&
-                                _updateError!.isNotEmpty &&
-                                _updateState == UpdateDownloadState.failed)
-                              Text(
-                                _updateError!,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.95),
-                                  fontSize: 11,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                      if (_updateState == UpdateDownloadState.downloading)
-                        SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            value: _downloadProgress > 0
-                                ? _downloadProgress
-                                : null,
-                            color: Colors.white,
-                          ),
-                        )
-                      else
-                        GestureDetector(
-                          onTap: () => setState(() => _update = null),
-                          child: const Icon(
-                            Icons.close,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                    ],
-                  ),
                 ),
               ),
             ),
@@ -641,7 +635,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
             Expanded(
               child: Platform.isWindows
                   ? _buildBodyStack(webView, bottomInset)
-                  : SafeArea(child: _buildBodyStack(webView, bottomInset)),
+                  : SafeArea(
+                      child: Column(
+                        children: [
+                          if (_update != null) _buildUpdateBanner(),
+                          Expanded(child: _buildBodyStack(webView, bottomInset)),
+                        ],
+                      ),
+                    ),
             ),
           ],
         ),

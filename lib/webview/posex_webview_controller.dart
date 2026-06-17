@@ -70,15 +70,20 @@ class PosexWebViewController {
         supportZoom: false,
         transparentBackground: false,
         disableDefaultErrorPage: false,
+        useHybridComposition: Platform.isAndroid,
       ),
       initialUserScripts: UnmodifiableListView<UserScript>([
         UserScript(
           source: '''
-window.PosExNativeBridge = window.PosExNativeBridge || {
-  postMessage: function(m){
-    window.flutter_inappwebview.callHandler('PosExNativeBridge', String(m));
-  }
-};
+(function(){
+  document.documentElement.classList.add('posex-native-app');
+  document.documentElement.style.setProperty('--safe-top', '0px');
+  window.PosExNativeBridge = window.PosExNativeBridge || {
+    postMessage: function(m){
+      window.flutter_inappwebview.callHandler('PosExNativeBridge', String(m));
+    }
+  };
+})();
 ''',
           injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
         ),

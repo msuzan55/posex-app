@@ -1,17 +1,59 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:flutter_thermal_printer/Windows/window_printer_manager.dart';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
 
-/// Thin wrapper over flutter_thermal_printer for USB (printer-class) devices.
-/// USB printers are identified by "vendorId:productId".
+/// USB printer access. On Windows uses [WindowPrinterManager] directly so we
+/// never touch [FlutterThermalPrinter.instance] (its getter calls
+/// flutter_blue_plus, which is Android/iOS only and crashes Windows startup).
 class UsbPrinterService {
-  final FlutterThermalPrinter _ftp = FlutterThermalPrinter.instance;
+  FlutterThermalPrinter? _androidFtp;
+  WindowPrinterManager? _windowsManager;
+
+  FlutterThermalPrinter get _ftp {
+    _androidFtp ??= FlutterThermalPrinter.instance;
+    return _androidFtp!;
+  }
+
+  WindowPrinterManager get _windows {
+    _windowsManager ??= WindowPrinterManager.instance;
+    return _windowsManager!;
+  }
 
   /// Scan for currently attached USB printers (best-effort, with timeout).
   Future<List<Printer>> scan({
     Duration timeout = const Duration(seconds: 4),
   }) async {
+    if (Platform.isWindows) {
+      return _scanWindows(timeout);
+    }
+    return _scanAndroid(timeout);
+  }
+
+  Future<List<Printer>> _scanWindows(Duration timeout) async {
+    final completer = Completer<List<Printer>>();
+    StreamSubscription<List<Printer>>? sub;
+    sub = _windows.devicesStream.listen((printers) {
+      final usb = printers
+          .where((p) => p.connectionType == ConnectionType.USB)
+          .toList();
+      if (usb.isNotEmpty && !completer.isCompleted) {
+        completer.complete(usb);
+      }
+    });
+    _windows.getPrinters(connectionTypes: const [ConnectionType.USB]);
+    final result = await completer.future
+        .timeout(timeout, onTimeout: () => <Printer>[]);
+    await sub.cancel();
+    try {
+      await _windows.stopscan();
+    } catch (_) {}
+    return result;
+  }
+
+  Future<List<Printer>> _scanAndroid(Duration timeout) async {
     final completer = Completer<List<Printer>>();
     StreamSubscription<List<Printer>>? sub;
     sub = _ftp.devicesStream.listen((printers) {
@@ -31,8 +73,19 @@ class UsbPrinterService {
   }
 
   Printer? _match(List<Printer> devices, String vendorId, String productId) {
+    final combined = '$vendorId:$productId';
     for (final p in devices) {
-      if (p.vendorId == vendorId && p.productId == productId) return p;
+      if (Platform.isWindows) {
+        if (p.name == vendorId ||
+            p.address == vendorId ||
+            p.address == combined ||
+            (p.vendorId == vendorId &&
+                (productId.isEmpty || p.productId == productId))) {
+          return p;
+        }
+      } else if (p.vendorId == vendorId && p.productId == productId) {
+        return p;
+      }
     }
     return devices.isNotEmpty ? devices.first : null;
   }
@@ -50,9 +103,12 @@ class UsbPrinterService {
     final devices = await scan();
     final printer = _match(devices, vendorId, productId);
     if (printer == null) return false;
-    // connect() triggers the USB permission request on first use; with the
-    // "use by default" grant (manifest attach filter) permission is already
-    // held, so don't gate printing on its return value.
+
+    if (Platform.isWindows) {
+      await _windows.printData(printer, bytes, longData: true);
+      return true;
+    }
+
     try {
       await _ftp.connect(printer);
     } catch (_) {}
@@ -62,4 +118,9 @@ class UsbPrinterService {
 }
 
 /// Pretty identifier persisted in PrinterConfig.address for USB printers.
-String usbAddress(Printer p) => '${p.vendorId ?? ''}:${p.productId ?? ''}';
+String usbAddress(Printer p) {
+  if (Platform.isWindows) {
+    return p.name ?? p.address ?? '';
+  }
+  return '${p.vendorId ?? ''}:${p.productId ?? ''}';
+}

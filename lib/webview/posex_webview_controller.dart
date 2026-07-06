@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../platform/app_diagnostics.dart';
+
 /// Cross-platform WebView wrapper via flutter_inappwebview.
 class PosexWebViewController {
   PosexWebViewController({
@@ -78,6 +80,7 @@ class PosexWebViewController {
 (function(){
   document.documentElement.classList.add('posex-native-app');
   document.documentElement.style.setProperty('--safe-top', '0px');
+  document.documentElement.style.setProperty('--safe-bottom', '0px');
   window.PosExNativeBridge = window.PosExNativeBridge || {
     postMessage: function(m){
       window.flutter_inappwebview.callHandler('PosExNativeBridge', String(m));
@@ -112,7 +115,8 @@ class PosexWebViewController {
       },
       onReceivedError: (controller, request, error) {
         if (request.isForMainFrame ?? false) {
-          debugPrint('[WebView] ${error.type} ${error.description}');
+          final detail = '${error.type} ${error.description}';
+          unawaited(AppDiagnostics.log('WEBVIEW', 'Main frame error: $detail'));
           onLoadFailed?.call(error.description);
           onLoadingChanged(false);
         }

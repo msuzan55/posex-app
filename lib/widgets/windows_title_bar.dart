@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../platform/app_diagnostics.dart';
 import '../platform/windows_shell_service.dart';
 import '../update/update_service.dart';
 
@@ -56,6 +57,8 @@ class _WindowsTitleBarState extends State<WindowsTitleBar> {
             _infoLine('App', info.appName),
             _infoLine('Version', '${info.version} (${info.buildNumber})'),
             _infoLine('Install folder', info.installDir),
+            if (AppDiagnostics.instance.logFilePath != null)
+              _infoLine('Log file', AppDiagnostics.instance.logFilePath!),
             const SizedBox(height: 8),
             const Text(
               'PosEx loads https://posex.lk/test/ with a local print server on port 9753.',
@@ -129,6 +132,7 @@ class _WindowsTitleBarState extends State<WindowsTitleBar> {
       color: const Color(0xFF151515),
       items: [
         const PopupMenuItem(value: 'info', child: Text('App information')),
+        const PopupMenuItem(value: 'logs', child: Text('Open logs folder')),
         PopupMenuItem(
           value: 'update',
           child: Text(widget.updateReady ? 'Install update now' : 'Check for updates'),
@@ -157,6 +161,8 @@ class _WindowsTitleBarState extends State<WindowsTitleBar> {
     switch (action) {
       case 'info':
         await _showAppInfo();
+      case 'logs':
+        await AppDiagnostics.instance.openLogFolder();
       case 'update':
         if (widget.updateReady) {
           await widget.onInstallUpdate?.call();

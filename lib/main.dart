@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'platform/app_diagnostics.dart';
 import 'platform/app_permissions.dart';
 import 'platform/windows_shell_service.dart';
 import 'print_server/device_info_service.dart';
@@ -18,6 +19,7 @@ import 'push/push_registration_service.dart';
 import 'update/update_service.dart';
 import 'update/windows_install_paths.dart';
 import 'webview/posex_webview_controller.dart';
+import 'widgets/startup_error_panel.dart';
 import 'widgets/windows_title_bar.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
@@ -25,41 +27,56 @@ import 'widgets/windows_title_bar.dart';
 const String kPosexUrl = 'https://posex.lk/test/';
 
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    await AppDiagnostics.init();
 
-  if (Platform.isWindows) {
-    await windowManager.ensureInitialized();
-    const windowOptions = WindowOptions(
-      size: Size(1280, 720),
-      center: true,
-      title: 'PosEx',
-      titleBarStyle: TitleBarStyle.hidden,
-    );
-    windowManager.waitUntilReadyToShow(windowOptions, () async {
-      await windowManager.show();
-      await windowManager.focus();
-    });
-    await WindowsShellService.configureLaunchAtStartup();
-  }
+    try {
+      if (Platform.isWindows) {
+        await windowManager.ensureInitialized();
+        const windowOptions = WindowOptions(
+          size: Size(1280, 720),
+          center: true,
+          title: 'PosEx',
+          titleBarStyle: TitleBarStyle.hidden,
+        );
+        windowManager.waitUntilReadyToShow(windowOptions, () async {
+          await windowManager.show();
+          await windowManager.focus();
+        });
+        await WindowsShellService.configureLaunchAtStartup();
+      }
 
-  // Visible but transparent status bar (not full-screen / immersive).
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      statusBarBrightness: Brightness.dark,
-      systemNavigationBarColor: Colors.black,
-      systemNavigationBarIconBrightness: Brightness.light,
-    ),
-  );
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
+      // Visible but transparent status bar (not full-screen / immersive).
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
+          systemNavigationBarColor: Colors.black,
+          systemNavigationBarIconBrightness: Brightness.light,
+        ),
+      );
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
 
-  runApp(const PosexApp());
+      runApp(const PosexApp());
+    } catch (e, st) {
+      final reason = 'PosEx failed to start: $e';
+      await AppDiagnostics.logStartupFailure(reason, stack: st);
+      if (Platform.isWindows) {
+        await AppDiagnostics.instance.showWindowsAlert('PosEx failed to start', reason);
+      }
+      rethrow;
+    }
+  }, (error, stack) async {
+    await AppDiagnostics.logError('Uncaught zone error', error, stack);
+    await AppDiagnostics.logStartupFailure('$error', stack: stack);
+  });
 }
 
 class PosexApp extends StatelessWidget {
@@ -92,6 +109,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   bool _webReady = false;
   bool _showPrintFab = true;
   String? _bootstrapError;
+  bool _showPreviousSessionNote = true;
   Timer? _fabTimer;
   Timer? _probeTimer;
   Timer? _webLoadTimeout;
@@ -130,14 +148,37 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    unawaited(AppDiagnostics.instance.logLifecycle(state.name));
     if (state == AppLifecycleState.resumed) {
       unawaited(_nudgeWebAppSync());
+    }
+    if (state == AppLifecycleState.detached) {
+      unawaited(AppDiagnostics.instance.markCleanExit());
     }
     // Keep background remote printing alive only while printers are connected.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
       unawaited(_syncPrintForegroundService());
     }
+  }
+
+  void _setBootstrapError(String message, {StackTrace? stack}) {
+    _bootstrapError = message;
+    unawaited(AppDiagnostics.logStartupFailure(message, stack: stack));
+  }
+
+  Future<void> _retryStartup() async {
+    await AppDiagnostics.instance.clearLastFatalError();
+    setState(() {
+      _bootstrapError = null;
+      _loading = true;
+      _webReady = false;
+      _showPreviousSessionNote = false;
+    });
+    await _webView?.dispose();
+    _webView = null;
+    _initWebView();
+    await _bootstrap();
   }
 
   /// Wake WebSocket + sync when the native shell returns to foreground (Windows has no Android foreground service).
@@ -202,7 +243,10 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
       final printStarted = await server.start();
       if (!printStarted) {
-        _bootstrapError = 'Print server could not start on port ${PrintHttpServer.port}';
+        _setBootstrapError(
+          'Print server could not start on port ${PrintHttpServer.port}. '
+          'Another program may be using this port, or Windows blocked it.',
+        );
       }
 
       await manager.init();
@@ -215,8 +259,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
       await _syncPrintForegroundService();
     } catch (e, st) {
-      debugPrint('[PosEx] bootstrap error: $e\n$st');
-      _bootstrapError ??= 'Startup error: $e';
+      _setBootstrapError('Startup error: $e', stack: st);
     } finally {
       if (mounted) {
         setState(() {});
@@ -348,7 +391,12 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         if (mounted) {
           setState(() {
             _loading = false;
-            _bootstrapError ??= 'Web page failed to load: $message';
+            if (_bootstrapError == null) {
+              _setBootstrapError(
+                'Web page failed to load: $message. '
+                'Check your internet connection and that https://posex.lk is reachable.',
+              );
+            }
           });
         }
       },
@@ -359,16 +407,21 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       if (!mounted || !_loading) return;
       setState(() {
         _loading = false;
-        _bootstrapError ??=
-            'Page load timed out. Check internet connection and try again.';
+        if (_bootstrapError == null) {
+          _setBootstrapError(
+            'Page load timed out after 45 seconds. '
+            'Check internet connection, firewall, or WebView2, then retry.',
+          );
+        }
       });
     });
     unawaited(() async {
       try {
         await webView.initialize(kPosexUrl);
       } catch (e, st) {
-        debugPrint('[PosEx] WebView init error: $e\n$st');
-        _bootstrapError ??= 'WebView failed to start: $e';
+        if (_bootstrapError == null) {
+          _setBootstrapError('WebView failed to start: $e', stack: st);
+        }
       } finally {
         if (mounted) {
           setState(() => _webReady = true);
@@ -546,6 +599,20 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   Widget _buildBodyStack(PosexWebViewController? webView, double bottomInset) {
+    final previousNote = _showPreviousSessionNote
+        ? AppDiagnostics.instance.previousSessionIssue
+        : null;
+
+    if (_bootstrapError != null) {
+      return StartupErrorPanel(
+        title: 'PosEx could not start',
+        message: _bootstrapError!,
+        previousSessionNote: previousNote,
+        onRetry: _retryStartup,
+        onDismiss: () => setState(() => _bootstrapError = null),
+      );
+    }
+
     return Stack(
       children: [
         if (webView != null && _webReady && webView.isReady)
@@ -558,19 +625,35 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
           const Center(
             child: CircularProgressIndicator(color: Color(0xFFF97316)),
           ),
-        if (_bootstrapError != null)
+        if (previousNote != null && previousNote.isNotEmpty)
           Positioned(
             left: 16,
             right: 16,
-            bottom: 16,
+            top: 12,
             child: Material(
-              color: const Color(0xFFB91C1C),
+              color: const Color(0xFF2A1810),
               borderRadius: BorderRadius.circular(10),
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: Text(
-                  _bootstrapError!,
-                  style: const TextStyle(color: Colors.white),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.warning_amber_rounded, color: Color(0xFFF97316), size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        previousNote,
+                        style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.35),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Dismiss',
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      icon: const Icon(Icons.close, color: Colors.white54, size: 18),
+                      onPressed: () => setState(() => _showPreviousSessionNote = false),
+                    ),
+                  ],
                 ),
               ),
             ),

@@ -66,10 +66,6 @@ class AppDiagnostics with WindowListener {
       return previousPlatformError?.call(error, stack) ?? false;
     };
 
-    if (Platform.isWindows) {
-      windowManager.addListener(instance);
-    }
-
     _initialized = true;
 
     PackageInfo? info;
@@ -107,22 +103,64 @@ class AppDiagnostics with WindowListener {
       markerText = '(could not read session marker)';
     }
 
+    final fatal = await _readLastFatalError();
+    if (_isSpuriousSessionIssue(markerText, fatal)) {
+      await _clearSessionMarker();
+      if (fatal != null && _isSpuriousSessionIssue(fatal, null)) {
+        await clearLastFatalError();
+      }
+      return;
+    }
+
     previousSessionIssue =
         'PosEx did not close normally last time ($markerText). '
         'It may have crashed, been force-closed, or lost power. '
         'Check the log file for details.';
 
-    final fatal = await _readLastFatalError();
     if (fatal != null && fatal.isNotEmpty) {
       previousSessionIssue = '$previousSessionIssue\n\nLast error:\n$fatal';
     }
+  }
+
+  bool _isSpuriousSessionIssue(String? markerText, String? fatal) {
+    final combined = '${markerText ?? ''}\n${fatal ?? ''}'.toLowerCase();
+    if (combined.trim().isEmpty) return false;
+    if (combined.contains(r'\temp\') || combined.contains(r'\tmp\')) {
+      return true;
+    }
+    if (combined.contains(r'rar$')) return true;
+    if (combined.contains('zip/rar archive') ||
+        combined.contains('temporary archive')) {
+      return true;
+    }
+    if (combined.contains('extract the full zip') ||
+        combined.contains('posex-setup.exe')) {
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _clearSessionMarker() async {
+    final marker = _sessionMarker;
+    if (marker != null && marker.existsSync()) {
+      try {
+        await marker.delete();
+      } catch (_) {}
+    }
+  }
+
+  static Future<void> attachWindowListener() async {
+    if (!Platform.isWindows || !_initialized) return;
+    windowManager.addListener(instance);
   }
 
   Future<void> _writeSessionMarker() async {
     final marker = _sessionMarker;
     if (marker == null) return;
     final stamp = DateTime.now().toIso8601String();
-    await marker.writeAsString('started $stamp pid=$pid');
+    await marker.writeAsString(
+      'started $stamp pid=$pid exe=${Platform.resolvedExecutable}',
+    );
   }
 
   Future<String?> _readLastFatalError() async {

@@ -33,6 +33,8 @@ flutter analyze
 
 **Windows requirements:** [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually preinstalled on Windows 10/11).
 
+**Opening from ZIP/RAR:** If you double-click the exe inside an archive, PosEx automatically copies itself to `%LOCALAPPDATA%\PosEx` and restarts. For first install, **PosEx-Setup.exe** is still recommended.
+
 ## CI (GitHub Actions)
 
 `.github/workflows/build-standalone.yml` builds on every push to `main`:

@@ -31,9 +31,13 @@ Future<void> main() async {
     WidgetsFlutterBinding.ensureInitialized();
     await AppDiagnostics.init();
 
+    String? fatalStartupError;
+
     try {
       if (Platform.isWindows) {
         await windowManager.ensureInitialized();
+        await AppDiagnostics.attachWindowListener();
+
         const windowOptions = WindowOptions(
           size: Size(1280, 720),
           center: true,
@@ -44,7 +48,22 @@ Future<void> main() async {
           await windowManager.show();
           await windowManager.focus();
         });
-        await WindowsShellService.configureLaunchAtStartup();
+
+        final launch = await WindowsInstallPaths.prepareLaunch();
+        if (launch.relaunching) return;
+        if (launch.blockMessage != null) {
+          fatalStartupError = launch.blockMessage;
+        } else {
+          try {
+            await WindowsShellService.configureLaunchAtStartup();
+          } catch (e, st) {
+            await AppDiagnostics.logError(
+              'Start-on-startup configuration failed',
+              e,
+              st,
+            );
+          }
+        }
       }
 
       // Visible but transparent status bar (not full-screen / immersive).
@@ -64,14 +83,11 @@ Future<void> main() async {
         DeviceOrientation.landscapeRight,
       ]);
 
-      runApp(const PosexApp());
+      runApp(PosexApp(initialStartupError: fatalStartupError));
     } catch (e, st) {
       final reason = 'PosEx failed to start: $e';
       await AppDiagnostics.logStartupFailure(reason, stack: st);
-      if (Platform.isWindows) {
-        await AppDiagnostics.instance.showWindowsAlert('PosEx failed to start', reason);
-      }
-      rethrow;
+      runApp(PosexApp(initialStartupError: reason));
     }
   }, (error, stack) async {
     await AppDiagnostics.logError('Uncaught zone error', error, stack);
@@ -80,20 +96,24 @@ Future<void> main() async {
 }
 
 class PosexApp extends StatelessWidget {
-  const PosexApp({super.key});
+  const PosexApp({super.key, this.initialStartupError});
+
+  final String? initialStartupError;
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       title: 'PosEx',
       debugShowCheckedModeBanner: false,
-      home: WebViewScreen(),
+      home: WebViewScreen(initialStartupError: initialStartupError),
     );
   }
 }
 
 class WebViewScreen extends StatefulWidget {
-  const WebViewScreen({super.key});
+  const WebViewScreen({super.key, this.initialStartupError});
+
+  final String? initialStartupError;
 
   @override
   State<WebViewScreen> createState() => _WebViewScreenState();
@@ -123,8 +143,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _initWebView();
-    _bootstrap();
+    if (widget.initialStartupError != null &&
+        widget.initialStartupError!.trim().isNotEmpty) {
+      _bootstrapError = widget.initialStartupError;
+      _loading = false;
+    } else {
+      _initWebView();
+      _bootstrap();
+    }
 
     _fabTimer = Timer(const Duration(seconds: 5), () {
       if (mounted) setState(() => _showPrintFab = false);
@@ -236,7 +262,15 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
       if (Platform.isWindows) {
         await WindowsInstallPaths.rememberCurrentInstallDir();
-        await WindowsShellService.ensureDefaultStartOnStartup();
+        try {
+          await WindowsShellService.ensureDefaultStartOnStartup();
+        } catch (e, st) {
+          await AppDiagnostics.logError(
+            'Default start-on-startup failed',
+            e,
+            st,
+          );
+        }
       }
 
       unawaited(PushRegistrationService.init());

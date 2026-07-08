@@ -497,13 +497,11 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         if (!mounted) return;
         setState(() {
           _loading = true;
-          if (_bootstrapError == null) {
-            _bootstrapError =
-                'PosEx page ${didCrash ? 'crashed' : 'stopped'} and is reloading.\n\n'
-                'If this keeps happening, delete:\n'
-                '%APPDATA%\\posex_app\\webview2\n'
-                'then open PosEx again.';
-          }
+          _bootstrapError ??=
+              'PosEx page ${didCrash ? 'crashed' : 'stopped'} and is reloading.\n\n'
+              'If this keeps happening, delete:\n'
+              '%APPDATA%\\posex_app\\webview2\n'
+              'then open PosEx again.';
         });
       },
     );

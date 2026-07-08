@@ -13,8 +13,14 @@ class WindowsStartup {
 
   static WebViewEnvironment? sharedWebViewEnvironment;
 
+  static const _vcRedistUrl =
+      'https://aka.ms/vs/17/release/vc_redist.x64.exe';
+
   static Future<String?> checkRuntimeRequirements() async {
     if (!Platform.isWindows) return null;
+
+    final vcError = _checkVcRedist();
+    if (vcError != null) return vcError;
 
     final webViewVersion = await WebViewEnvironment.getAvailableVersion();
     if (webViewVersion == null) {
@@ -26,6 +32,41 @@ class WindowsStartup {
 
     await AppDiagnostics.log('INFO', 'WebView2 runtime version: $webViewVersion');
     return null;
+  }
+
+  static String? _checkVcRedist() {
+    final sysRoot = Platform.environment['SystemRoot'] ?? r'C:\Windows';
+    final sys32 = '$sysRoot${Platform.pathSeparator}System32';
+    const required = [
+      'vcruntime140.dll',
+      'vcruntime140_1.dll',
+      'msvcp140.dll',
+    ];
+
+    final missing = <String>[];
+    for (final dll in required) {
+      if (!File('$sys32${Platform.pathSeparator}$dll').existsSync()) {
+        missing.add(dll);
+      }
+    }
+    if (missing.isEmpty) return null;
+
+    final installDir = File(Platform.resolvedExecutable).parent;
+    final bundledRedist = File(
+      '${installDir.path}${Platform.pathSeparator}vc_redist.x64.exe',
+    );
+    final bundledHint = bundledRedist.existsSync()
+        ? '\n\nRun this file as Administrator:\n${bundledRedist.path}'
+        : '';
+
+    return 'Microsoft Visual C++ Runtime is missing (${missing.join(', ')}).\n\n'
+        'PosEx needs the Visual C++ 2015–2022 Redistributable (x64).\n\n'
+        'Fix:\n'
+        '1. Install PosEx using PosEx-Setup.exe (recommended)\n'
+        '2. Or download and run:\n'
+        '   $_vcRedistUrl'
+        '$bundledHint\n\n'
+        'Then restart PosEx.';
   }
 
   static Future<void> setupWindow() async {

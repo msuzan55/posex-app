@@ -36,6 +36,7 @@ Name: "startup"; Description: "Start PosEx when Windows starts"; GroupDescriptio
 [Files]
 Source: "{#ReleaseDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "launch_posex.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "redist\vc_redist.x64.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"
@@ -47,4 +48,26 @@ Name: "{userstartup}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "PosEx"; ValueData: """{app}\launch_posex.cmd"""; Tasks: startup; Flags: uninsdeletevalue
 
 [Run]
+Filename: "{app}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Check: VCRedistNeedsInstall; Flags: waituntilterminated
 Filename: "{app}\launch_posex.cmd"; Description: "Launch PosEx"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function VCRedistNeedsInstall: Boolean;
+var
+  Installed: Cardinal;
+begin
+  Result := True;
+  if RegQueryDWordValue(HKLM, 'SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) then
+  begin
+    if Installed = 1 then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+  if RegQueryDWordValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64', 'Installed', Installed) then
+  begin
+    if Installed = 1 then
+      Result := False;
+  end;
+end;

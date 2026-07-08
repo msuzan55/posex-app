@@ -113,6 +113,13 @@ jobs:
           restore-keys: |
             posex-webview2-nuget-${{ runner.os }}-
 
+      - name: Download Visual C++ redistributable (x64)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path install\redist | Out-Null
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
+            -OutFile "install\redist\vc_redist.x64.exe"
+
       - name: Build release Windows app
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
@@ -123,6 +130,8 @@ jobs:
             --build-number=${{ github.run_number }}
           Copy-Item install\launch_posex.cmd `
             build\windows\x64\runner\Release\launch_posex.cmd -Force
+          Copy-Item install\redist\vc_redist.x64.exe `
+            build\windows\x64\runner\Release\vc_redist.x64.exe -Force
 
       - name: Zip portable Windows release (for in-app OTA)
         shell: pwsh

@@ -7,6 +7,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'windows_single_instance.dart';
+
 /// Persistent logs + crash detection for PosEx (especially Windows desktop).
 ///
 /// Logs live under application support: `logs/posex-YYYY-MM-DD.log`
@@ -333,7 +335,16 @@ class AppDiagnostics with WindowListener {
 
   @override
   void onWindowClose() {
-    unawaited(AppDiagnostics.log('WARN', 'Window close event received'));
+    unawaited(_handleWindowClose());
+  }
+
+  Future<void> _handleWindowClose() async {
+    await log('INFO', 'Window close requested');
+    await markCleanExit();
+    if (Platform.isWindows) {
+      await WindowsSingleInstance.release();
+    }
+    await windowManager.destroy();
   }
 
   @override

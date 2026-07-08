@@ -48,7 +48,8 @@ class WindowsStartup {
     );
 
     windowManager.waitUntilReadyToShow(windowOptions, showWindow);
-    await AppDiagnostics.log('INFO', 'Window manager ready');
+    await windowManager.setPreventClose(true);
+    await AppDiagnostics.log('INFO', 'Window manager ready (close guarded)');
   }
 
   /// Creates WebView2 environment before the widget tree mounts so failures

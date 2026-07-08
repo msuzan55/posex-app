@@ -25,13 +25,16 @@ class PosexWebViewController {
 
   static const _webViewKey = ValueKey<String>('posex-main-webview');
 
+  final InAppWebViewKeepAlive _keepAlive = InAppWebViewKeepAlive();
+  final Completer<void> _mountReady = Completer<void>();
+
   InAppWebViewController? _controller;
   WebViewEnvironment? _windowsEnv;
-  Widget? _cachedWebViewWidget;
+  Widget? _stableWebViewWidget;
+  bool _widgetBuilt = false;
   bool _canGoBack = false;
   bool _ready = false;
   bool _pageLoaded = false;
-  bool _mountWebView = false;
   String? _initialUrl;
 
   bool get isReady => _ready;
@@ -42,13 +45,19 @@ class PosexWebViewController {
     }
     _initialUrl = initialUrl;
     _ready = true;
-    _mountWebView = !Platform.isWindows;
     if (Platform.isWindows) {
-      // Let the shell paint once before creating the native WebView2 control.
+      // Let the Flutter window paint once before creating WebView2.
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      _mountWebView = true;
       await AppDiagnostics.log('INFO', 'WebView widget mount enabled');
     }
+    if (!_mountReady.isCompleted) {
+      _mountReady.complete();
+    }
+  }
+
+  /// Waits until [initialize] has finished and the host may mount the widget.
+  Future<void> waitUntilMountable() async {
+    await _mountReady.future;
   }
 
   Future<void> _ensureWindowsEnvironment() async {
@@ -74,17 +83,19 @@ class PosexWebViewController {
     );
   }
 
-  Widget buildWidget() {
-    if (!_ready || _initialUrl == null || !_mountWebView) {
-      return const Center(
-        child: CircularProgressIndicator(color: Color(0xFFF97316)),
-      );
+  /// Builds the platform WebView widget exactly once for [StableWebViewHost].
+  Widget buildWidgetOnce() {
+    if (_widgetBuilt) {
+      return _stableWebViewWidget!;
+    }
+    if (!_ready || _initialUrl == null) {
+      throw StateError('WebView controller is not ready');
     }
 
-    // IMPORTANT (Windows): build InAppWebView once. Rebuilding/disposing it
-    // destroys the native parent HWND and closes the whole Flutter app.
-    _cachedWebViewWidget ??= InAppWebView(
+    _widgetBuilt = true;
+    _stableWebViewWidget = InAppWebView(
       key: _webViewKey,
+      keepAlive: _keepAlive,
       webViewEnvironment: _windowsEnv,
       initialUrlRequest: URLRequest(url: WebUri('about:blank')),
       initialSettings: InAppWebViewSettings(
@@ -106,7 +117,10 @@ class PosexWebViewController {
       },
       onCreateWindow: (controller, action) async {
         final url = action.request.url?.toString() ?? '';
-        await AppDiagnostics.log('INFO', 'WebView popup blocked, loading in place: $url');
+        await AppDiagnostics.log(
+          'INFO',
+          'WebView popup blocked, loading in place: $url',
+        );
         if (url.isNotEmpty) {
           await controller.loadUrl(urlRequest: action.request);
         }
@@ -117,6 +131,14 @@ class PosexWebViewController {
           AppDiagnostics.log(
             'WARN',
             'WebView window.close() ignored — PosEx stays open',
+          ),
+        );
+      },
+      onRenderProcessGone: (controller, detail) {
+        unawaited(
+          AppDiagnostics.log(
+            'ERROR',
+            'WebView render process gone: ${detail.didCrash ? 'crashed' : 'terminated'}',
           ),
         );
       },
@@ -207,7 +229,7 @@ class PosexWebViewController {
       },
     );
 
-    return _cachedWebViewWidget!;
+    return _stableWebViewWidget!;
   }
 
   void _markPageLoaded() {
@@ -243,9 +265,14 @@ class PosexWebViewController {
 
   Future<void> dispose() async {
     _controller = null;
-    _cachedWebViewWidget = null;
+    if (_widgetBuilt) {
+      try {
+        await InAppWebViewController.disposeKeepAlive(_keepAlive);
+      } catch (_) {}
+    }
+    _stableWebViewWidget = null;
+    _widgetBuilt = false;
     _ready = false;
-    _mountWebView = false;
     _initialUrl = null;
     _pageLoaded = false;
   }

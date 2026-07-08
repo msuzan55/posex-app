@@ -20,6 +20,7 @@ import 'push/push_registration_service.dart';
 import 'update/update_service.dart';
 import 'update/windows_install_paths.dart';
 import 'webview/posex_webview_controller.dart';
+import 'webview/stable_webview_host.dart';
 import 'widgets/startup_error_panel.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
@@ -133,13 +134,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   final UpdateService _updateService = UpdateService();
 
   bool _loading = true;
-  bool _webReady = false;
   bool _showPrintFab = true;
   String? _bootstrapError;
   bool _showPreviousSessionNote = true;
+  Key _webViewHostKey = UniqueKey();
   Timer? _fabTimer;
   Timer? _probeTimer;
   Timer? _webLoadTimeout;
+  Timer? _heartbeatTimer;
   VoidCallback? _printerManagerListener;
   UpdateInfo? _update;
   UpdateDownloadState _updateState = UpdateDownloadState.idle;
@@ -176,6 +178,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     _fabTimer?.cancel();
     _probeTimer?.cancel();
     _webLoadTimeout?.cancel();
+    _heartbeatTimer?.cancel();
     final listener = _printerManagerListener;
     final manager = _printerManager;
     if (listener != null && manager != null) {
@@ -214,8 +217,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     setState(() {
       _bootstrapError = null;
       _loading = true;
-      _webReady = false;
       _showPreviousSessionNote = false;
+      _webViewHostKey = UniqueKey();
     });
     await _webView?.dispose();
     _webView = null;
@@ -316,11 +319,32 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       _setBootstrapError('Startup error: $e', stack: st);
     } finally {
       if (mounted) {
-        setState(() {});
+        if (_bootstrapError != null) {
+          setState(() {});
+        }
         await AppDiagnostics.log('INFO', 'Bootstrap complete');
-        _checkForUpdate();
+        if (Platform.isWindows) {
+          _startWindowsHeartbeat();
+          Future<void>.delayed(const Duration(seconds: 15), () {
+            if (mounted) unawaited(_checkForUpdate());
+          });
+        } else {
+          unawaited(_checkForUpdate());
+        }
       }
     }
+  }
+
+  void _startWindowsHeartbeat() {
+    _heartbeatTimer?.cancel();
+    var tick = 0;
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      tick += 1;
+      unawaited(AppDiagnostics.log('INFO', 'PosEx alive tick $tick'));
+      if (!mounted || tick >= 30) {
+        timer.cancel();
+      }
+    });
   }
 
   Future<void> _checkForUpdate() async {
@@ -485,10 +509,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       } catch (e, st) {
         if (_bootstrapError == null) {
           _setBootstrapError('WebView failed to start: $e', stack: st);
-        }
-      } finally {
-        if (mounted) {
-          setState(() => _webReady = true);
         }
       }
     }());
@@ -666,30 +686,39 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     final previousNote = _showPreviousSessionNote
         ? AppDiagnostics.instance.previousSessionIssue
         : null;
-
-    if (_bootstrapError != null) {
-      return StartupErrorPanel(
-        title: 'PosEx could not start',
-        message: _bootstrapError!,
-        previousSessionNote: previousNote,
-        onRetry: _retryStartup,
-        onDismiss: () => setState(() => _bootstrapError = null),
-      );
-    }
+    final showStartupError =
+        _bootstrapError != null && _bootstrapError!.trim().isNotEmpty;
 
     return Stack(
+      fit: StackFit.expand,
       children: [
-        if (webView != null && _webReady && webView.isReady)
-          webView.buildWidget()
+        if (webView != null)
+          StableWebViewHost(
+            key: _webViewHostKey,
+            controller: webView,
+          )
         else
           const Center(
             child: CircularProgressIndicator(color: Color(0xFFF97316)),
           ),
         if (_loading)
-          const Center(
-            child: CircularProgressIndicator(color: Color(0xFFF97316)),
+          const ColoredBox(
+            color: Color(0xCC000000),
+            child: Center(
+              child: CircularProgressIndicator(color: Color(0xFFF97316)),
+            ),
           ),
-        if (previousNote != null && previousNote.isNotEmpty)
+        if (showStartupError)
+          Positioned.fill(
+            child: StartupErrorPanel(
+              title: 'PosEx could not start',
+              message: _bootstrapError!,
+              previousSessionNote: previousNote,
+              onRetry: _retryStartup,
+              onDismiss: () => setState(() => _bootstrapError = null),
+            ),
+          )
+        else if (previousNote != null && previousNote.isNotEmpty)
           Positioned(
             left: 16,
             right: 16,

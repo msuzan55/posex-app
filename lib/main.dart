@@ -303,9 +303,13 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         );
       }
 
-      await manager.init();
+      await manager.init(probePrinters: !Platform.isWindows);
       if (Platform.isWindows) {
         await AppDiagnostics.log('INFO', 'Print services started (USB scan deferred)');
+        Future<void>.delayed(const Duration(seconds: 45), () {
+          if (!mounted) return;
+          unawaited(manager.reconnectAll());
+        });
       }
       _attachPrinterManagerListener(manager);
 
@@ -324,6 +328,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         }
         await AppDiagnostics.log('INFO', 'Bootstrap complete');
         if (Platform.isWindows) {
+          unawaited(AppDiagnostics.log('INFO', 'PosEx alive tick 0'));
           _startWindowsHeartbeat();
           Future<void>.delayed(const Duration(seconds: 15), () {
             if (mounted) unawaited(_checkForUpdate());
@@ -487,6 +492,19 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
             }
           });
         }
+      },
+      onRenderProcessGone: (didCrash) {
+        if (!mounted) return;
+        setState(() {
+          _loading = true;
+          if (_bootstrapError == null) {
+            _bootstrapError =
+                'PosEx page ${didCrash ? 'crashed' : 'stopped'} and is reloading.\n\n'
+                'If this keeps happening, delete:\n'
+                '%APPDATA%\\posex_app\\webview2\n'
+                'then open PosEx again.';
+          }
+        });
       },
     );
     _webView = webView;

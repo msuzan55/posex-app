@@ -74,11 +74,6 @@ class WindowsStartup {
 
     await windowManager.ensureInitialized();
 
-    Future<void> showWindow() async {
-      await windowManager.show();
-      await windowManager.focus();
-    }
-
     // Normal title bar is more stable on some Windows PCs than hidden + custom bar.
     const windowOptions = WindowOptions(
       size: Size(1280, 720),
@@ -88,7 +83,10 @@ class WindowsStartup {
       titleBarStyle: TitleBarStyle.normal,
     );
 
-    windowManager.waitUntilReadyToShow(windowOptions, showWindow);
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
     await windowManager.setPreventClose(true);
     await AppDiagnostics.log('INFO', 'Window manager ready (close guarded)');
   }

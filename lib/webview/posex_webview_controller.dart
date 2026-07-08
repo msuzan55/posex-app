@@ -16,12 +16,14 @@ class PosexWebViewController {
     required this.onPageFinished,
     required this.onLoadingChanged,
     this.onLoadFailed,
+    this.onRenderProcessGone,
   });
 
   final void Function(String message) onBridgeMessage;
   final VoidCallback onPageFinished;
   final void Function(bool loading) onLoadingChanged;
   final void Function(String message)? onLoadFailed;
+  final void Function(bool didCrash)? onRenderProcessGone;
 
   static const _webViewKey = ValueKey<String>('posex-main-webview');
 
@@ -46,8 +48,8 @@ class PosexWebViewController {
     _initialUrl = initialUrl;
     _ready = true;
     if (Platform.isWindows) {
-      // Let the Flutter window paint once before creating WebView2.
-      await Future<void>.delayed(const Duration(milliseconds: 250));
+      // Let the native window finish showing before embedding WebView2.
+      await Future<void>.delayed(const Duration(milliseconds: 500));
       await AppDiagnostics.log('INFO', 'WebView widget mount enabled');
     }
     if (!_mountReady.isCompleted) {
@@ -135,12 +137,30 @@ class PosexWebViewController {
         );
       },
       onRenderProcessGone: (controller, detail) {
-        unawaited(
-          AppDiagnostics.log(
+        unawaited(() async {
+          final crashed = detail.didCrash;
+          await AppDiagnostics.log(
             'ERROR',
-            'WebView render process gone: ${detail.didCrash ? 'crashed' : 'terminated'}',
-          ),
-        );
+            'WebView render process gone: ${crashed ? 'crashed' : 'terminated'}',
+          );
+          await AppDiagnostics.logStartupFailure(
+            'WebView ${crashed ? 'crashed' : 'stopped'}. Reloading PosEx…',
+          );
+          onRenderProcessGone?.call(crashed);
+          try {
+            await controller.reload();
+            await AppDiagnostics.log('INFO', 'WebView reload after render process exit');
+          } catch (e, st) {
+            await AppDiagnostics.logError('WebView reload failed', e, st);
+          }
+        }());
+      },
+      onConsoleMessage: (controller, message) {
+        if (message.messageLevel == ConsoleMessageLevel.ERROR) {
+          unawaited(
+            AppDiagnostics.log('WEBVIEW', 'JS error: ${message.message}'),
+          );
+        }
       },
       initialUserScripts: UnmodifiableListView<UserScript>([
         UserScript(

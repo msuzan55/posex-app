@@ -48,13 +48,16 @@ class PrinterManager extends ChangeNotifier {
     return null;
   }
 
-  /// Load saved printers + defaults, then try to connect to all of them.
-  Future<void> init() async {
+  /// Load saved printers + defaults. On Windows, printer probes are deferred
+  /// until [reconnectAll] is called so USB/native code cannot race WebView startup.
+  Future<void> init({bool probePrinters = true}) async {
     _printers = await _store.load();
     _defaultPosId = await _store.defaultPosId;
     _defaultBarcodeId = await _store.defaultBarcodeId;
     notifyListeners();
-    await reconnectAll();
+    if (probePrinters) {
+      await reconnectAll();
+    }
   }
 
   Future<void> reconnectAll() async {

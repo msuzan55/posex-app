@@ -38,31 +38,17 @@ class WindowsStartup {
       await windowManager.focus();
     }
 
-    const hiddenOptions = WindowOptions(
+    // Normal title bar is more stable on some Windows PCs than hidden + custom bar.
+    const windowOptions = WindowOptions(
       size: Size(1280, 720),
-      center: true,
-      title: 'PosEx',
-      titleBarStyle: TitleBarStyle.hidden,
-    );
-    const normalOptions = WindowOptions(
-      size: Size(1280, 720),
+      minimumSize: Size(1024, 640),
       center: true,
       title: 'PosEx',
       titleBarStyle: TitleBarStyle.normal,
     );
 
-    try {
-      windowManager.waitUntilReadyToShow(hiddenOptions, showWindow);
-      await AppDiagnostics.log('INFO', 'Window manager ready (hidden title bar)');
-    } catch (e, st) {
-      await AppDiagnostics.logError(
-        'Hidden title bar failed, using normal title bar',
-        e,
-        st,
-      );
-      windowManager.waitUntilReadyToShow(normalOptions, showWindow);
-      await AppDiagnostics.log('INFO', 'Window manager ready (normal title bar)');
-    }
+    windowManager.waitUntilReadyToShow(windowOptions, showWindow);
+    await AppDiagnostics.log('INFO', 'Window manager ready');
   }
 
   /// Creates WebView2 environment before the widget tree mounts so failures

@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'platform/app_diagnostics.dart';
 import 'platform/app_permissions.dart';
 import 'platform/windows_shell_service.dart';
+import 'platform/windows_single_instance.dart';
 import 'platform/windows_startup.dart';
 import 'print_server/device_info_service.dart';
 import 'print_server/print_foreground_service.dart';
@@ -20,7 +21,6 @@ import 'update/update_service.dart';
 import 'update/windows_install_paths.dart';
 import 'webview/posex_webview_controller.dart';
 import 'widgets/startup_error_panel.dart';
-import 'widgets/windows_title_bar.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
 /// embedded localhost print server (USB/Bluetooth/Network) on :9753.
@@ -35,6 +35,10 @@ Future<void> main() async {
 
     try {
       if (Platform.isWindows) {
+        if (!await WindowsSingleInstance.acquire()) {
+          return;
+        }
+
         await AppDiagnostics.log('INFO', 'Windows launch checks starting');
         final launch = await WindowsInstallPaths.prepareLaunch();
         if (launch.relaunching) return;
@@ -142,6 +146,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   double _downloadProgress = 0;
   String? _updateError;
   bool _loggedUiReady = false;
+  bool _bootstrapStarted = false;
 
   @override
   void initState() {
@@ -188,6 +193,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     }
     if (state == AppLifecycleState.detached) {
       unawaited(AppDiagnostics.instance.markCleanExit());
+      if (Platform.isWindows) {
+        unawaited(WindowsSingleInstance.release());
+      }
     }
     // Keep background remote printing alive only while printers are connected.
     if (state == AppLifecycleState.paused ||
@@ -211,6 +219,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     });
     await _webView?.dispose();
     _webView = null;
+    _bootstrapStarted = false;
     _initWebView();
     await _bootstrap();
   }
@@ -292,6 +301,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       }
 
       await manager.init();
+      if (Platform.isWindows) {
+        await AppDiagnostics.log('INFO', 'Print services started (USB scan deferred)');
+      }
       _attachPrinterManagerListener(manager);
 
       _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
@@ -416,6 +428,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     await requestAppPermissions();
   }
 
+  void _startBootstrapOnce() {
+    if (_bootstrapStarted || _bootstrapError != null || _printServer != null) {
+      return;
+    }
+    _bootstrapStarted = true;
+    unawaited(_bootstrap());
+  }
+
   void _initWebView() {
     final webView = PosexWebViewController(
       onBridgeMessage: _onBridgeMessage,
@@ -424,6 +444,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         if (mounted) setState(() => _loading = false);
         _syncAuthTokenFromWebView();
         _reportNativePushStatus();
+        _startBootstrapOnce();
       },
       onLoadingChanged: (loading) {
         if (mounted) setState(() => _loading = loading);
@@ -460,9 +481,6 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     unawaited(() async {
       try {
         await webView.initialize(kPosexUrl);
-        if (mounted && _bootstrapError == null && _printServer == null) {
-          unawaited(_bootstrap());
-        }
       } catch (e, st) {
         if (_bootstrapError == null) {
           _setBootstrapError('WebView failed to start: $e', stack: st);
@@ -752,17 +770,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         backgroundColor: Colors.black,
         body: Column(
           children: [
-            if (Platform.isWindows)
-              WindowsTitleBar(
-                updateService: _updateService,
-                updateReady: _update != null &&
-                    _updateState == UpdateDownloadState.ready,
-                onCheckForUpdate: _checkForUpdate,
-                onInstallUpdate: _runUpdate,
-              ),
             Expanded(
               child: Platform.isWindows
-                  ? _buildBodyStack(webView, bottomInset)
+                  ? Column(
+                      children: [
+                        if (_update != null) _buildUpdateBanner(),
+                        Expanded(child: _buildBodyStack(webView, bottomInset)),
+                      ],
+                    )
                   : SafeArea(
                       child: Column(
                         children: [

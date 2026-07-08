@@ -225,6 +225,10 @@ class PrinterManager extends ChangeNotifier {
           if (!Platform.isAndroid) return false;
           return _ensureBluetooth(printer.address);
         case PrinterTransport.usb:
+          if (Platform.isWindows) {
+            // USB scan uses native printer APIs — run only when sending, not at startup.
+            return false;
+          }
           final vp = _vendorProduct(printer.address);
           return _usb.isPresent(vp.vendor, vp.product);
       }

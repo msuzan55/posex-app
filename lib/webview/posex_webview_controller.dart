@@ -28,6 +28,7 @@ class PosexWebViewController {
   bool _canGoBack = false;
   bool _ready = false;
   bool _pageLoaded = false;
+  bool _mountWebView = false;
   String? _initialUrl;
 
   bool get isReady => _ready;
@@ -38,6 +39,13 @@ class PosexWebViewController {
     }
     _initialUrl = initialUrl;
     _ready = true;
+    _mountWebView = !Platform.isWindows;
+    if (Platform.isWindows) {
+      // Let the shell paint once before creating the native WebView2 control.
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      _mountWebView = true;
+      await AppDiagnostics.log('INFO', 'WebView widget mount enabled');
+    }
   }
 
   Future<void> _ensureWindowsEnvironment() async {
@@ -64,14 +72,14 @@ class PosexWebViewController {
   }
 
   Widget buildWidget() {
-    if (!_ready || _initialUrl == null) {
+    if (!_ready || _initialUrl == null || !_mountWebView) {
       return const Center(
         child: CircularProgressIndicator(color: Color(0xFFF97316)),
       );
     }
     return InAppWebView(
       webViewEnvironment: _windowsEnv,
-      initialUrlRequest: URLRequest(url: WebUri(_initialUrl!)),
+      initialUrlRequest: URLRequest(url: WebUri('about:blank')),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
         mediaPlaybackRequiresUserGesture: false,
@@ -80,7 +88,14 @@ class PosexWebViewController {
         transparentBackground: false,
         disableDefaultErrorPage: false,
         useHybridComposition: Platform.isAndroid,
+        hardwareAcceleration: !Platform.isWindows,
+        supportMultipleWindows: false,
+        useShouldOverrideUrlLoading: true,
+        useOnLoadResource: false,
       ),
+      shouldOverrideUrlLoading: (controller, action) async {
+        return NavigationActionPolicy.ALLOW;
+      },
       initialUserScripts: UnmodifiableListView<UserScript>([
         UserScript(
           source: '''
@@ -100,6 +115,7 @@ class PosexWebViewController {
       ]),
       onWebViewCreated: (controller) {
         _controller = controller;
+        unawaited(AppDiagnostics.log('INFO', 'InAppWebView control created'));
         controller.addJavaScriptHandler(
           handlerName: 'PosExNativeBridge',
           callback: (args) {
@@ -107,17 +123,38 @@ class PosexWebViewController {
             onBridgeMessage('${args.first}');
           },
         );
+        final url = _initialUrl;
+        if (url != null && url.isNotEmpty) {
+          unawaited(() async {
+            try {
+              await AppDiagnostics.log('INFO', 'Loading PosEx URL: $url');
+              await controller.loadUrl(
+                urlRequest: URLRequest(url: WebUri(url)),
+              );
+            } catch (e, st) {
+              await AppDiagnostics.logError('WebView loadUrl failed', e, st);
+              onLoadFailed?.call('$e');
+            }
+          }());
+        }
       },
       onLoadStart: (controller, url) {
         _pageLoaded = false;
         onLoadingChanged(true);
       },
       onLoadStop: (controller, url) {
-        _markPageLoaded();
+        if (_isAppUrl(url)) {
+          _markPageLoaded();
+        }
       },
       onProgressChanged: (controller, progress) {
         if (progress >= 100) {
-          _markPageLoaded();
+          unawaited(() async {
+            final url = await controller.getUrl();
+            if (_isAppUrl(url)) {
+              _markPageLoaded();
+            }
+          }());
         }
       },
       onReceivedError: (controller, request, error) {
@@ -148,6 +185,12 @@ class PosexWebViewController {
     onPageFinished();
   }
 
+  bool _isAppUrl(WebUri? url) {
+    final value = url?.toString() ?? '';
+    if (value.isEmpty || value.startsWith('about:')) return false;
+    return value.contains('posex.lk');
+  }
+
   Future<void> _refreshCanGoBack() async {
     _canGoBack = await _controller?.canGoBack() ?? false;
   }
@@ -168,6 +211,7 @@ class PosexWebViewController {
   Future<void> dispose() async {
     _controller = null;
     _ready = false;
+    _mountWebView = false;
     _initialUrl = null;
     _pageLoaded = false;
   }

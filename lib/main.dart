@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:window_manager/window_manager.dart';
 
 import 'platform/app_diagnostics.dart';
 import 'platform/app_permissions.dart';
@@ -36,6 +35,7 @@ Future<void> main() async {
 
     try {
       if (Platform.isWindows) {
+        await AppDiagnostics.log('INFO', 'Windows launch checks starting');
         final launch = await WindowsInstallPaths.prepareLaunch();
         if (launch.relaunching) return;
         if (launch.blockMessage != null) {
@@ -43,20 +43,16 @@ Future<void> main() async {
         } else {
           fatalStartupError ??= await WindowsStartup.checkRuntimeRequirements();
         }
+        await AppDiagnostics.log('INFO', 'Windows launch checks finished');
 
-        await windowManager.ensureInitialized();
-        await AppDiagnostics.attachWindowListener();
+        if (fatalStartupError == null) {
+          await AppDiagnostics.log('INFO', 'Initializing window');
+          await WindowsStartup.setupWindow();
+          await AppDiagnostics.attachWindowListener();
 
-        const windowOptions = WindowOptions(
-          size: Size(1280, 720),
-          center: true,
-          title: 'PosEx',
-          titleBarStyle: TitleBarStyle.hidden,
-        );
-        windowManager.waitUntilReadyToShow(windowOptions, () async {
-          await windowManager.show();
-          await windowManager.focus();
-        });
+          await AppDiagnostics.log('INFO', 'Preparing WebView2 environment');
+          fatalStartupError ??= await WindowsStartup.prepareWebViewEnvironment();
+        }
 
         if (fatalStartupError == null) {
           try {
@@ -71,23 +67,25 @@ Future<void> main() async {
         }
       }
 
-      // Visible but transparent status bar (not full-screen / immersive).
-      SystemChrome.setSystemUIOverlayStyle(
-        const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.light,
-          statusBarBrightness: Brightness.dark,
-          systemNavigationBarColor: Colors.black,
-          systemNavigationBarIconBrightness: Brightness.light,
-        ),
-      );
-      await SystemChrome.setPreferredOrientations([
-        DeviceOrientation.portraitUp,
-        DeviceOrientation.portraitDown,
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
+      if (!Platform.isWindows) {
+        SystemChrome.setSystemUIOverlayStyle(
+          const SystemUiOverlayStyle(
+            statusBarColor: Colors.transparent,
+            statusBarIconBrightness: Brightness.light,
+            statusBarBrightness: Brightness.dark,
+            systemNavigationBarColor: Colors.black,
+            systemNavigationBarIconBrightness: Brightness.light,
+          ),
+        );
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+      }
 
+      await AppDiagnostics.log('INFO', 'Starting Flutter UI');
       runApp(PosexApp(initialStartupError: fatalStartupError));
     } catch (e, st) {
       final reason = 'PosEx failed to start: $e';
@@ -143,18 +141,23 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   UpdateDownloadState _updateState = UpdateDownloadState.idle;
   double _downloadProgress = 0;
   String? _updateError;
+  bool _loggedUiReady = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_loggedUiReady) return;
+      _loggedUiReady = true;
+      unawaited(AppDiagnostics.instance.onUiReady());
+    });
     if (widget.initialStartupError != null &&
         widget.initialStartupError!.trim().isNotEmpty) {
       _bootstrapError = widget.initialStartupError;
       _loading = false;
     } else {
       _initWebView();
-      _bootstrap();
     }
 
     _fabTimer = Timer(const Duration(seconds: 5), () {
@@ -457,6 +460,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     unawaited(() async {
       try {
         await webView.initialize(kPosexUrl);
+        if (mounted && _bootstrapError == null && _printServer == null) {
+          unawaited(_bootstrap());
+        }
       } catch (e, st) {
         if (_bootstrapError == null) {
           _setBootstrapError('WebView failed to start: $e', stack: st);

@@ -7,6 +7,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../platform/app_diagnostics.dart';
+import '../platform/windows_startup.dart';
 
 /// Cross-platform WebView wrapper via flutter_inappwebview.
 class PosexWebViewController {
@@ -41,6 +42,12 @@ class PosexWebViewController {
 
   Future<void> _ensureWindowsEnvironment() async {
     if (_windowsEnv != null) return;
+
+    final shared = WindowsStartup.sharedWebViewEnvironment;
+    if (shared != null) {
+      _windowsEnv = shared;
+      return;
+    }
 
     final runtimeVersion = await WebViewEnvironment.getAvailableVersion();
     if (runtimeVersion == null) {

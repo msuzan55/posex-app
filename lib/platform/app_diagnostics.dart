@@ -112,14 +112,20 @@ class AppDiagnostics with WindowListener {
       return;
     }
 
-    previousSessionIssue =
-        'PosEx did not close normally last time ($markerText). '
-        'It may have crashed, been force-closed, or lost power. '
-        'Check the log file for details.';
-
-    if (fatal != null && fatal.isNotEmpty) {
-      previousSessionIssue = '$previousSessionIssue\n\nLast error:\n$fatal';
+    // Only warn when we have a recorded fatal error — avoids scary false alarms
+    // when Windows killed the process without Dart logging the cause.
+    if (fatal == null || fatal.isEmpty) {
+      await _clearSessionMarker();
+      return;
     }
+
+    previousSessionIssue = 'Last session error:\n$fatal';
+  }
+
+  /// Called after the first frame is drawn — startup succeeded.
+  Future<void> onUiReady() async {
+    await log('INFO', 'PosEx UI ready');
+    await clearLastFatalError();
   }
 
   bool _isSpuriousSessionIssue(String? markerText, String? fatal) {

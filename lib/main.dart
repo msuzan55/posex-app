@@ -317,6 +317,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     } finally {
       if (mounted) {
         setState(() {});
+        await AppDiagnostics.log('INFO', 'Bootstrap complete');
         _checkForUpdate();
       }
     }

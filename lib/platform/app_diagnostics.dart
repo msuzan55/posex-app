@@ -333,6 +333,7 @@ class AppDiagnostics with WindowListener {
 
   @override
   void onWindowClose() {
+    unawaited(AppDiagnostics.log('WARN', 'Window close event received'));
     unawaited(markCleanExit());
   }
 }

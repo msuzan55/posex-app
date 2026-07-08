@@ -23,8 +23,11 @@ class PosexWebViewController {
   final void Function(bool loading) onLoadingChanged;
   final void Function(String message)? onLoadFailed;
 
+  static const _webViewKey = ValueKey<String>('posex-main-webview');
+
   InAppWebViewController? _controller;
   WebViewEnvironment? _windowsEnv;
+  Widget? _cachedWebViewWidget;
   bool _canGoBack = false;
   bool _ready = false;
   bool _pageLoaded = false;
@@ -77,7 +80,11 @@ class PosexWebViewController {
         child: CircularProgressIndicator(color: Color(0xFFF97316)),
       );
     }
-    return InAppWebView(
+
+    // IMPORTANT (Windows): build InAppWebView once. Rebuilding/disposing it
+    // destroys the native parent HWND and closes the whole Flutter app.
+    _cachedWebViewWidget ??= InAppWebView(
+      key: _webViewKey,
       webViewEnvironment: _windowsEnv,
       initialUrlRequest: URLRequest(url: WebUri('about:blank')),
       initialSettings: InAppWebViewSettings(
@@ -90,11 +97,28 @@ class PosexWebViewController {
         useHybridComposition: Platform.isAndroid,
         hardwareAcceleration: !Platform.isWindows,
         supportMultipleWindows: false,
+        javaScriptCanOpenWindowsAutomatically: false,
         useShouldOverrideUrlLoading: true,
         useOnLoadResource: false,
       ),
       shouldOverrideUrlLoading: (controller, action) async {
         return NavigationActionPolicy.ALLOW;
+      },
+      onCreateWindow: (controller, action) async {
+        final url = action.request.url?.toString() ?? '';
+        await AppDiagnostics.log('INFO', 'WebView popup blocked, loading in place: $url');
+        if (url.isNotEmpty) {
+          await controller.loadUrl(urlRequest: action.request);
+        }
+        return false;
+      },
+      onCloseWindow: (controller) {
+        unawaited(
+          AppDiagnostics.log(
+            'WARN',
+            'WebView window.close() ignored — PosEx stays open',
+          ),
+        );
       },
       initialUserScripts: UnmodifiableListView<UserScript>([
         UserScript(
@@ -108,6 +132,13 @@ class PosexWebViewController {
       window.flutter_inappwebview.callHandler('PosExNativeBridge', String(m));
     }
   };
+  var nativeClose = window.close;
+  window.close = function(){
+    try{
+      console.warn('[PosEx] blocked window.close() in native app');
+    }catch(e){}
+  };
+  window.__posexNativeClose = nativeClose;
 })();
 ''',
           injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
@@ -175,6 +206,8 @@ class PosexWebViewController {
         unawaited(_refreshCanGoBack());
       },
     );
+
+    return _cachedWebViewWidget!;
   }
 
   void _markPageLoaded() {
@@ -210,6 +243,7 @@ class PosexWebViewController {
 
   Future<void> dispose() async {
     _controller = null;
+    _cachedWebViewWidget = null;
     _ready = false;
     _mountWebView = false;
     _initialUrl = null;

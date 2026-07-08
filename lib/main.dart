@@ -163,6 +163,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         widget.initialStartupError!.trim().isNotEmpty) {
       _bootstrapError = widget.initialStartupError;
       _loading = false;
+    } else if (Platform.isWindows) {
+      unawaited(_startWindowsSession());
     } else {
       _initWebView();
     }
@@ -214,6 +216,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 
   Future<void> _retryStartup() async {
     await AppDiagnostics.instance.clearLastFatalError();
+    _probeTimer?.cancel();
+    _probeTimer = null;
     setState(() {
       _bootstrapError = null;
       _loading = true;
@@ -223,8 +227,21 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     await _webView?.dispose();
     _webView = null;
     _bootstrapStarted = false;
-    _initWebView();
+    _printServer = null;
+    _printerManager = null;
+    if (Platform.isWindows) {
+      await _startWindowsSession();
+    } else {
+      _initWebView();
+      await _bootstrap();
+    }
+  }
+
+  /// Windows: start print server before loading the web app (localhost:9753).
+  Future<void> _startWindowsSession() async {
     await _bootstrap();
+    if (!mounted || _bootstrapError != null) return;
+    _initWebView();
   }
 
   /// Wake WebSocket + sync when the native shell returns to foreground (Windows has no Android foreground service).
@@ -313,10 +330,12 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       }
       _attachPrinterManagerListener(manager);
 
-      _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
-        await manager.reconnectAll();
-        await _syncPrintForegroundService();
-      });
+      if (!Platform.isWindows) {
+        _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
+          await manager.reconnectAll();
+          await _syncPrintForegroundService();
+        });
+      }
 
       await _syncPrintForegroundService();
     } catch (e, st) {
@@ -459,6 +478,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   void _startBootstrapOnce() {
+    if (Platform.isWindows) return;
     if (_bootstrapStarted || _bootstrapError != null || _printServer != null) {
       return;
     }
@@ -474,7 +494,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         if (mounted) setState(() => _loading = false);
         _syncAuthTokenFromWebView();
         _reportNativePushStatus();
-        _startBootstrapOnce();
+        if (!Platform.isWindows) {
+          _startBootstrapOnce();
+        }
       },
       onLoadingChanged: (loading) {
         if (mounted) setState(() => _loading = loading);

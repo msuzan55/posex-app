@@ -200,6 +200,9 @@ class PosexWebViewController {
         if (url != null && url.isNotEmpty) {
           unawaited(() async {
             try {
+              if (Platform.isWindows) {
+                await Future<void>.delayed(const Duration(milliseconds: 800));
+              }
               await AppDiagnostics.log('INFO', 'Loading PosEx URL: $url');
               await controller.loadUrl(
                 urlRequest: URLRequest(url: WebUri(url)),

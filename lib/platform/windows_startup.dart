@@ -134,7 +134,10 @@ class WindowsStartup {
     }
 
     return WebViewEnvironment.create(
-      settings: WebViewEnvironmentSettings(userDataFolder: userData.path),
+      settings: WebViewEnvironmentSettings(
+        userDataFolder: userData.path,
+        additionalBrowserArguments: '--disable-gpu',
+      ),
     );
   }
 }

@@ -33,9 +33,10 @@ class WindowsShellService {
   static Future<void> configureLaunchAtStartup() async {
     if (!isSupported) return;
     final info = await PackageInfo.fromPlatform();
+    final installDir = await WindowsInstallPaths.installDir();
     launchAtStartup.setup(
       appName: info.appName,
-      appPath: Platform.resolvedExecutable,
+      appPath: WindowsInstallPaths.preferredLaunchPath(installDir),
     );
   }
 
@@ -120,8 +121,15 @@ class WindowsShellService {
       }
     }
 
-    final exe = Platform.resolvedExecutable;
-    await Process.start(exe, [], mode: ProcessStartMode.detached);
+    final exe = WindowsInstallPaths.preferredLaunchPath(
+      Directory(File(Platform.resolvedExecutable).parent.path),
+    );
+    await Process.start(
+      'cmd.exe',
+      ['/c', exe],
+      mode: ProcessStartMode.detached,
+      runInShell: false,
+    );
     exit(0);
   }
 }

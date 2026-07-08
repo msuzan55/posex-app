@@ -121,6 +121,8 @@ jobs:
           flutter build windows --release `
             --build-name="1.0.${{ github.run_number }}" `
             --build-number=${{ github.run_number }}
+          Copy-Item install\launch_posex.cmd `
+            build\windows\x64\runner\Release\launch_posex.cmd -Force
 
       - name: Zip portable Windows release (for in-app OTA)
         shell: pwsh

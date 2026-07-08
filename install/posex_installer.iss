@@ -35,15 +35,16 @@ Name: "startup"; Description: "Start PosEx when Windows starts"; GroupDescriptio
 
 [Files]
 Source: "{#ReleaseDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "launch_posex.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\PosEx"; Filename: "{app}\posex_app.exe"
-Name: "{autoprograms}\PosEx"; Filename: "{app}\posex_app.exe"
-Name: "{autodesktop}\PosEx"; Filename: "{app}\posex_app.exe"; Tasks: desktopicon
-Name: "{userstartup}\PosEx"; Filename: "{app}\posex_app.exe"; Tasks: startup
+Name: "{group}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"
+Name: "{autoprograms}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"
+Name: "{autodesktop}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"; Tasks: desktopicon
+Name: "{userstartup}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"; Tasks: startup
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "PosEx"; ValueData: """{app}\posex_app.exe"""; Tasks: startup; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "PosEx"; ValueData: """{app}\launch_posex.cmd"""; Tasks: startup; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\posex_app.exe"; Description: "Launch PosEx"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\launch_posex.cmd"; Description: "Launch PosEx"; Flags: nowait postinstall skipifsilent

@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import 'platform/app_diagnostics.dart';
 import 'platform/app_permissions.dart';
 import 'platform/windows_shell_service.dart';
+import 'platform/windows_startup.dart';
 import 'print_server/device_info_service.dart';
 import 'print_server/print_foreground_service.dart';
 import 'print_server/print_http_server.dart';
@@ -35,6 +36,14 @@ Future<void> main() async {
 
     try {
       if (Platform.isWindows) {
+        final launch = await WindowsInstallPaths.prepareLaunch();
+        if (launch.relaunching) return;
+        if (launch.blockMessage != null) {
+          fatalStartupError = launch.blockMessage;
+        } else {
+          fatalStartupError ??= await WindowsStartup.checkRuntimeRequirements();
+        }
+
         await windowManager.ensureInitialized();
         await AppDiagnostics.attachWindowListener();
 
@@ -49,11 +58,7 @@ Future<void> main() async {
           await windowManager.focus();
         });
 
-        final launch = await WindowsInstallPaths.prepareLaunch();
-        if (launch.relaunching) return;
-        if (launch.blockMessage != null) {
-          fatalStartupError = launch.blockMessage;
-        } else {
+        if (fatalStartupError == null) {
           try {
             await WindowsShellService.configureLaunchAtStartup();
           } catch (e, st) {

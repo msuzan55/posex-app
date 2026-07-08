@@ -33,6 +33,15 @@ class WindowsInstallPaths {
 
   static Directory get currentExeDir => File(Platform.resolvedExecutable).parent;
 
+  /// Prefer launch_posex.cmd so working directory is always the install folder.
+  static String preferredLaunchPath([Directory? dir]) {
+    final root = dir ?? currentExeDir;
+    final launcher =
+        File('${root.path}${Platform.pathSeparator}launch_posex.cmd');
+    if (launcher.existsSync()) return launcher.path;
+    return File('${root.path}${Platform.pathSeparator}posex_app.exe').path;
+  }
+
   static Directory permanentInstallDir() {
     final localAppData = Platform.environment['LOCALAPPDATA'] ?? '';
     if (localAppData.isNotEmpty) {
@@ -73,6 +82,11 @@ class WindowsInstallPaths {
         Directory('${root.path}${Platform.pathSeparator}data${Platform.pathSeparator}flutter_assets');
     if (!assets.existsSync()) {
       return 'App files are incomplete. Extract the full ZIP or run PosEx-Setup.exe.';
+    }
+
+    final icu = File('${root.path}${Platform.pathSeparator}data${Platform.pathSeparator}icudtl.dat');
+    if (!icu.existsSync()) {
+      return 'App data (icudtl.dat) is missing. Extract the full ZIP or run PosEx-Setup.exe.';
     }
 
     return null;
@@ -126,6 +140,10 @@ class WindowsInstallPaths {
         'Copying PosEx from unstable folder ${current.path} to ${target.path}',
       );
       await _copyInstallFolder(from: current, to: target);
+      final copiedOk = validateInstallBundle(target);
+      if (copiedOk != null) {
+        throw StateError('Copied install is incomplete: $copiedOk');
+      }
       await _rememberInstallDir(target);
       await AppDiagnostics.instance.markCleanExit();
       await _relaunchFrom(target);
@@ -188,7 +206,24 @@ class WindowsInstallPaths {
     if (!exe.existsSync()) {
       throw StateError('posex_app.exe not found in ${dir.path}');
     }
-    await Process.start(exe.path, [], mode: ProcessStartMode.detached);
+
+    final launcher = File('${dir.path}${Platform.pathSeparator}launch_posex.cmd');
+    if (launcher.existsSync()) {
+      await Process.start(
+        'cmd.exe',
+        ['/c', launcher.path],
+        mode: ProcessStartMode.detached,
+        runInShell: false,
+      );
+    } else {
+      await Process.start(
+        'cmd.exe',
+        ['/c', 'start', '""', '/D', dir.path, exe.path],
+        mode: ProcessStartMode.detached,
+        runInShell: false,
+      );
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 400));
     exit(0);
   }
 
@@ -201,6 +236,47 @@ class WindowsInstallPaths {
     }
     await to.create(recursive: true);
 
+    if (Platform.isWindows) {
+      final result = await Process.run('robocopy', [
+        from.path,
+        to.path,
+        '/E',
+        '/IS',
+        '/IT',
+        '/R:5',
+        '/W:1',
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NC',
+        '/NS',
+        '/NP',
+      ]);
+      final code = result.exitCode;
+      if (code >= 8) {
+        throw StateError(
+          'Copy failed (robocopy exit $code): ${result.stderr}',
+        );
+      }
+    } else {
+      await _copyInstallFolderDart(from: from, to: to);
+    }
+
+    final launcher = File(
+      '${from.path}${Platform.pathSeparator}launch_posex.cmd',
+    );
+    if (launcher.existsSync()) {
+      await launcher.copy(
+        '${to.path}${Platform.pathSeparator}launch_posex.cmd',
+      );
+    }
+  }
+
+  static Future<void> _copyInstallFolderDart({
+    required Directory from,
+    required Directory to,
+  }) async {
     await for (final entity in from.list(followLinks: false)) {
       final name = entity.path.split(Platform.pathSeparator).last;
       final destPath = '${to.path}${Platform.pathSeparator}$name';

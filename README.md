@@ -2,16 +2,19 @@
 
 Simple **Windows** WebView wrapper for [PosEx](https://posex.lk).
 
-Loads `https://posex.lk/test/` in a native window (WebView2). No print server, no Android, no OTA — just the web app.
+Loads `https://posex.lk/test/` in a native window (WebView2).
 
-## Requirements
+## Download (built by GitHub Actions)
 
-- Windows 10/11
-- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually preinstalled)
-- Flutter stable (for local builds)
-- Visual Studio with Desktop development with C++ (for local Windows builds)
+https://github.com/msuzan55/posex-app/releases/latest
 
-## Local build
+1. Download **posex-app-windows.zip**
+2. Unzip to a folder (e.g. `C:\PosEx\`) — do **not** run from inside the ZIP
+3. Open **`Launch PosEx.cmd`**
+4. If it fails to open: run **`vc_redist.x64.exe`**, install [WebView2](https://go.microsoft.com/fwlink/p/?LinkId=2124703), then retry
+5. Blank/crash: delete `%APPDATA%\posex_app\webview2` and open again
+
+## Local build (on a Windows PC)
 
 ```bash
 cd posex-app
@@ -23,27 +26,10 @@ flutter build windows --release
 
 Release output: `build/windows/x64/runner/Release/`
 
-## CI (GitHub Actions)
-
-`.github/workflows/build-windows.yml` builds on every push to `main`:
-
-- Analyzes & tests on Ubuntu
-- Builds Windows release ZIP on `windows-latest`
-- Publishes `posex-app-windows.zip` to GitHub Release `build-{run_number}`
-
-## Publish from suzanpro → standalone GitHub repo
+## Publish from suzanpro → GitHub (triggers CI build)
 
 ```bash
 /var/www/suzanpro/scripts/publish-posex-app-to-git.sh "your commit message"
 ```
 
-Standalone repo: https://github.com/msuzan55/posex-app
-
-## Project layout
-
-```
-lib/main.dart          # WebView shell only
-windows/               # Flutter Windows runner
-.github/workflows/     # Windows CI build
-assets/icon/           # App icon
-```
+Repo: https://github.com/msuzan55/posex-app

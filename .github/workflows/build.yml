@@ -60,6 +60,13 @@ jobs:
           restore-keys: |
             posex-webview2-nuget-${{ runner.os }}-
 
+      - name: Download Visual C++ redistributable (x64)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path install | Out-Null
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
+            -OutFile "install\vc_redist.x64.exe"
+
       - name: Build release Windows app
         env:
           CMAKE_POLICY_VERSION_MINIMUM: "3.5"
@@ -68,6 +75,12 @@ jobs:
           flutter build windows --release `
             --build-name="1.0.${{ github.run_number }}" `
             --build-number=${{ github.run_number }}
+          Copy-Item install\launch_posex.cmd `
+            "build\windows\x64\runner\Release\Launch PosEx.cmd" -Force
+          Copy-Item install\vc_redist.x64.exe `
+            build\windows\x64\runner\Release\vc_redist.x64.exe -Force
+          Copy-Item install\README-WINDOWS.txt `
+            build\windows\x64\runner\Release\README.txt -Force
 
       - name: Zip portable Windows release
         shell: pwsh
@@ -108,9 +121,15 @@ jobs:
           name: PosEx Windows build ${{ github.run_number }}
           body: |
             ## Windows
-            - **posex-app-windows.zip** — portable WebView app for PosEx (`https://posex.lk/test/`)
+            - **posex-app-windows.zip** — portable WebView app for PosEx
 
-            Unzip and run `posex_app.exe`. Requires [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
+            ### How to install
+            1. Download and **unzip** to a folder (e.g. `C:\PosEx\`)
+            2. Run **`Launch PosEx.cmd`** (preferred) or `posex_app.exe`
+            3. If it will not open, run **`vc_redist.x64.exe`** then try again
+            4. Needs [WebView2 Runtime](https://go.microsoft.com/fwlink/p/?LinkId=2124703)
+
+            Do **not** run the exe from inside the ZIP.
           files: |
             release/posex-app-windows.zip
           make_latest: true

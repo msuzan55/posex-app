@@ -99,7 +99,7 @@ class PosexWebViewController {
       key: _webViewKey,
       keepAlive: _keepAlive,
       webViewEnvironment: _windowsEnv,
-      initialUrlRequest: URLRequest(url: WebUri('about:blank')),
+      initialUrlRequest: URLRequest(url: WebUri(_initialUrl!)),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
         mediaPlaybackRequiresUserGesture: false,
@@ -196,29 +196,14 @@ class PosexWebViewController {
             onBridgeMessage('${args.first}');
           },
         );
-        final url = _initialUrl;
-        if (url != null && url.isNotEmpty) {
-          unawaited(() async {
-            try {
-              if (Platform.isWindows) {
-                await Future<void>.delayed(const Duration(milliseconds: 800));
-              }
-              await AppDiagnostics.log('INFO', 'Loading PosEx URL: $url');
-              await controller.loadUrl(
-                urlRequest: URLRequest(url: WebUri(url)),
-              );
-            } catch (e, st) {
-              await AppDiagnostics.logError('WebView loadUrl failed', e, st);
-              onLoadFailed?.call('$e');
-            }
-          }());
-        }
       },
       onLoadStart: (controller, url) {
         _pageLoaded = false;
         onLoadingChanged(true);
+        unawaited(AppDiagnostics.log('INFO', 'WebView load start: $url'));
       },
       onLoadStop: (controller, url) {
+        unawaited(AppDiagnostics.log('INFO', 'WebView load stop: $url'));
         if (_isAppUrl(url)) {
           _markPageLoaded();
         }

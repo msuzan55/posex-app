@@ -3,17 +3,12 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  firebase_core
   flutter_inappwebview_windows
-  flutter_thermal_printer
-  permission_handler_windows
-  print_bluetooth_thermal
   screen_retriever_windows
   window_manager
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
-  jni
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

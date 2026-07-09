@@ -32,7 +32,6 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
-/dist/
 
 # Symbolication related
 app.*.symbols
@@ -44,6 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-/android/.kotlin/
-/android/key.properties
-/android/app/*.keystore
+
+# Windows ephemeral
+windows/flutter/ephemeral/

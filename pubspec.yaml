@@ -1,9 +1,8 @@
 name: posex_app
-description: PosEx mobile app — offline-first POS for Sri Lankan retail.
+description: PosEx Windows app — simple WebView wrapper for https://posex.lk
 publish_to: 'none'
 
-version: 1.0.1+2
-# versionName+versionCode above are defaults for local builds only.
+version: 1.0.0+1
 # GitHub Actions sets --build-name=1.0.{run} and --build-number={run} on every push.
 
 environment:
@@ -12,24 +11,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.8
   flutter_inappwebview: ^6.1.5
-  permission_handler: ^11.3.1
-  shelf: ^1.4.1
-  shared_preferences: ^2.3.3
-  print_bluetooth_thermal: ^1.1.0
-  flutter_thermal_printer: ^0.0.9
-  # In-app update (check GitHub release, download + install APK)
-  package_info_plus: ^8.0.2
-  http: ^1.2.2
-  path_provider: ^2.1.4
-  device_info_plus: ^11.2.0
-  firebase_core: ^3.8.1
-  firebase_messaging: ^15.1.6
-  flutter_local_notifications: ^18.0.1
-  archive: ^4.0.9
   window_manager: ^0.4.3
-  launch_at_startup: ^0.3.1
 
 dev_dependencies:
   flutter_test:
@@ -41,12 +24,9 @@ flutter:
   uses-material-design: true
 
 flutter_launcher_icons:
-  android: true
+  android: false
   ios: false
   image_path: "assets/icon/app_icon.png"
-  min_sdk_android: 21
-  adaptive_icon_background: "#0F6B52"
-  adaptive_icon_foreground: "assets/icon/app_icon.png"
   windows:
     generate: true
     image_path: "assets/icon/app_icon.png"

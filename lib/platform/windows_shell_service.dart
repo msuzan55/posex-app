@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../platform/windows_single_instance.dart';
 import '../update/windows_install_paths.dart';
 
 class PosexAppInfo {
@@ -124,6 +125,8 @@ class WindowsShellService {
     final exe = WindowsInstallPaths.preferredLaunchPath(
       Directory(File(Platform.resolvedExecutable).parent.path),
     );
+    // Release the lock so the restarted instance can acquire it immediately.
+    await WindowsSingleInstance.release();
     await Process.start(
       'cmd.exe',
       ['/c', exe],

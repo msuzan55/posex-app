@@ -4,6 +4,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../platform/app_diagnostics.dart';
+import '../platform/windows_single_instance.dart';
 
 const _installDirKey = 'posex_windows_install_dir';
 
@@ -206,6 +207,10 @@ class WindowsInstallPaths {
     if (!exe.existsSync()) {
       throw StateError('posex_app.exe not found in ${dir.path}');
     }
+
+    // Release the single-instance lock before starting the new process so the
+    // new instance can acquire it without hitting the "already running" check.
+    await WindowsSingleInstance.release();
 
     final launcher = File('${dir.path}${Platform.pathSeparator}launch_posex.cmd');
     if (launcher.existsSync()) {

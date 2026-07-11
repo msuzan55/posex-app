@@ -6,9 +6,11 @@ list(APPEND FLUTTER_PLUGIN_LIST
   firebase_core
   flutter_inappwebview_windows
   flutter_thermal_printer
+  fullscreen_window
   permission_handler_windows
   print_bluetooth_thermal
   screen_retriever_windows
+  webview_win_floating
   webview_windows
   window_manager
 )

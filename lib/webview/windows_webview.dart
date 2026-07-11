@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:webview_windows/webview_windows.dart';
+import 'package:webview_win_floating/webview_win_floating.dart';
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 import '../platform/app_diagnostics.dart';
 
 class WindowsWebView extends StatefulWidget {
@@ -24,7 +25,7 @@ class WindowsWebView extends StatefulWidget {
 }
 
 class WindowsWebViewState extends State<WindowsWebView> {
-  final WebviewController _controller = WebviewController();
+  late final WinWebViewController _controller;
   bool _initialized = false;
   bool _hasError = false;
   String? _errorMsg;
@@ -32,23 +33,29 @@ class WindowsWebViewState extends State<WindowsWebView> {
   @override
   void initState() {
     super.initState();
+    _controller = WinWebViewController();
     unawaited(_initWebView());
   }
 
   Future<void> _initWebView() async {
     try {
-      final runtimeVersion = await WebviewController.getWebViewVersion();
-      if (runtimeVersion == null) {
-        throw StateError(
-          'Microsoft Edge WebView2 Runtime is not installed.\n\n'
-          'Please install it, then restart PosEx.',
-        );
-      }
+      await _controller.setJavaScriptMode(JavaScriptMode.unrestricted);
 
-      await _controller.initialize();
+      // Listen for messages from JavaScript
+      await _controller.addJavaScriptChannel(
+        'PosExNativeBridgeChannel',
+        onMessageReceived: (JavaScriptMessage message) {
+          widget.onBridgeMessage(message.message);
+        },
+      );
 
-      // Inject native bridge and CSS settings on document creation
-      await _controller.addScriptToExecuteOnDocumentCreated('''
+      // Listen for page events
+      await _controller.setNavigationDelegate(
+        WinNavigationDelegate(
+          onPageStarted: (url) async {
+            widget.onLoadingChanged(true);
+            // Inject native bridge and CSS settings when loading starts
+            await _controller.runJavaScript('''
 (function(){
   document.documentElement.classList.add('posex-native-app');
   document.documentElement.style.setProperty('--safe-top', '0px');
@@ -56,7 +63,11 @@ class WindowsWebViewState extends State<WindowsWebView> {
   
   window.PosExNativeBridge = window.PosExNativeBridge || {
     postMessage: function(m){
-      window.chrome.webview.postMessage(String(m));
+      try {
+        PosExNativeBridgeChannel.postMessage(String(m));
+      } catch(e) {
+        console.error('Bridge postMessage failed', e);
+      }
     }
   };
   
@@ -69,25 +80,18 @@ class WindowsWebViewState extends State<WindowsWebView> {
   window.__posexNativeClose = nativeClose;
 })();
 ''');
+          },
+          onPageFinished: (url) async {
+            widget.onLoadingChanged(false);
+            widget.onPageFinished();
+          },
+          onWebResourceError: (error) {
+            widget.onLoadFailed(error.description);
+          },
+        ),
+      );
 
-      // Listen for messages from JavaScript
-      _controller.webMessage.listen((dynamic message) {
-        if (message != null) {
-          widget.onBridgeMessage(message.toString());
-        }
-      });
-
-      // Listen for loading state changes
-      _controller.loadingState.listen((state) {
-        if (state == LoadingState.loading) {
-          widget.onLoadingChanged(true);
-        } else if (state == LoadingState.navigationCompleted) {
-          widget.onLoadingChanged(false);
-          widget.onPageFinished();
-        }
-      });
-
-      await _controller.loadUrl(widget.url);
+      await _controller.loadRequest(Uri.parse(widget.url));
 
       if (mounted) {
         setState(() {
@@ -109,7 +113,7 @@ class WindowsWebViewState extends State<WindowsWebView> {
   Future<void> runJavaScript(String js) async {
     if (!_initialized) return;
     try {
-      await _controller.executeScript(js);
+      await _controller.runJavaScript(js);
     } catch (e, st) {
       await AppDiagnostics.logError('Windows WebView JS execution failed', e, st);
     }
@@ -118,8 +122,7 @@ class WindowsWebViewState extends State<WindowsWebView> {
   Future<bool> canGoBack() async {
     if (!_initialized) return false;
     try {
-      final res = await _controller.executeScript('window.history.length > 1');
-      return res == true || res == 1 || res == 'true';
+      return await _controller.canGoBack();
     } catch (_) {
       return false;
     }
@@ -128,14 +131,8 @@ class WindowsWebViewState extends State<WindowsWebView> {
   Future<void> goBack() async {
     if (!_initialized) return;
     try {
-      await _controller.executeScript('window.history.back()');
+      await _controller.goBack();
     } catch (_) {}
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
   }
 
   @override
@@ -159,6 +156,6 @@ class WindowsWebViewState extends State<WindowsWebView> {
       );
     }
 
-    return Webview(_controller);
+    return WinWebViewWidget(controller: _controller);
   }
 }

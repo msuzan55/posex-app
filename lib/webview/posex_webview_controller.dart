@@ -108,7 +108,7 @@ class PosexWebViewController {
         transparentBackground: false,
         disableDefaultErrorPage: false,
         useHybridComposition: Platform.isAndroid,
-        hardwareAcceleration: !Platform.isWindows,
+        hardwareAcceleration: true,
         supportMultipleWindows: false,
         javaScriptCanOpenWindowsAutomatically: false,
         useShouldOverrideUrlLoading: true,

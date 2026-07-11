@@ -53,8 +53,34 @@ class WindowsInstallPaths {
 
   /// True when PosEx is running from WinRAR/7-Zip temp or another unstable folder.
   static bool isUnsafeRunLocation([Directory? dir]) {
-    final path = _normalizedPath((dir ?? currentExeDir).path);
-    if (path.contains(r'\temp\') || path.contains(r'\tmp\')) return true;
+    final rootDir = dir ?? currentExeDir;
+    final path = _normalizedPath(rootDir.path);
+
+    // If it's already in the permanent install directory, it's safe.
+    final permanentPath = _normalizedPath(permanentInstallDir().path);
+    if (path == permanentPath || path.startsWith('$permanentPath\\')) {
+      return false;
+    }
+
+    // Check if it's running from the system temp directory.
+    final tempPath = _normalizedPath(Directory.systemTemp.path);
+    if (path.startsWith(tempPath) || path.contains('$tempPath\\')) {
+      return true;
+    }
+
+    // Standard temp/tmp pattern checks, but avoid matching AppData unless it is under Temp.
+    if (path.contains(r'\temp\') || path.contains(r'\tmp\')) {
+      final localAppData = _normalizedPath(Platform.environment['LOCALAPPDATA'] ?? '');
+      if (localAppData.isNotEmpty && path.startsWith(localAppData)) {
+        final appDataTemp = '$localAppData\\temp';
+        if (path.startsWith(appDataTemp)) {
+          return true;
+        }
+        return false;
+      }
+      return true;
+    }
+
     if (path.contains(r'rar$')) return true;
     if (path.contains(r'\7z') && path.contains(r'\temp')) return true;
     return false;
@@ -218,17 +244,17 @@ class WindowsInstallPaths {
         'cmd.exe',
         ['/c', launcher.path],
         mode: ProcessStartMode.detached,
-        runInShell: false,
+        workingDirectory: dir.path,
       );
     } else {
       await Process.start(
-        'cmd.exe',
-        ['/c', 'start', '""', '/D', dir.path, exe.path],
+        exe.path,
+        [],
         mode: ProcessStartMode.detached,
-        runInShell: false,
+        workingDirectory: dir.path,
       );
     }
-    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await Future<void>.delayed(const Duration(milliseconds: 500));
     exit(0);
   }
 

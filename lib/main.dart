@@ -21,6 +21,7 @@ import 'update/update_service.dart';
 import 'update/windows_install_paths.dart';
 import 'webview/posex_webview_controller.dart';
 import 'webview/stable_webview_host.dart';
+import 'webview/windows_webview.dart';
 import 'widgets/startup_error_panel.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
@@ -129,6 +130,7 @@ class WebViewScreen extends StatefulWidget {
 
 class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserver {
   PosexWebViewController? _webView;
+  final GlobalKey<WindowsWebViewState> _windowsWebViewKey = GlobalKey<WindowsWebViewState>();
   PrinterManager? _printerManager;
   PrintHttpServer? _printServer;
   final UpdateService _updateService = UpdateService();
@@ -241,7 +243,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   Future<void> _startWindowsSession() async {
     await _bootstrap();
     if (!mounted || _bootstrapError != null) return;
-    _initWebView();
+    setState(() {});
   }
 
   /// Wake WebSocket + sync when the native shell returns to foreground (Windows has no Android foreground service).
@@ -574,10 +576,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   Future<void> _syncAuthTokenFromWebView() async {
-    final webView = _webView;
-    if (webView == null) return;
-    try {
-      await webView.runJavaScript('''
+    const js = '''
 (function(){
   function readToken(){
     try{
@@ -603,7 +602,20 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     });
   }
 })();
-''');
+''';
+
+    if (Platform.isWindows) {
+      final state = _windowsWebViewKey.currentState;
+      if (state != null) {
+        await state.runJavaScript(js);
+      }
+      return;
+    }
+
+    final webView = _webView;
+    if (webView == null) return;
+    try {
+      await webView.runJavaScript(js);
     } catch (_) {}
   }
 
@@ -615,17 +627,25 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   }
 
   Future<void> _reportNativePushStatus() async {
-    final webView = _webView;
-    if (webView == null) return;
     final status = await PushRegistrationService.getStatus();
     final err = status.error;
     final errJs = err == null
         ? 'null'
         : '"${err.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"';
+    final js = 'window.dispatchEvent(new CustomEvent("posexNativePushStatus",{detail:{enabled:${status.enabled ? 'true' : 'false'},native:true,permissionGranted:${status.permissionGranted ? 'true' : 'false'},registered:${status.registeredWithServer ? 'true' : 'false'},hasFcmToken:${status.hasFcmToken ? 'true' : 'false'},error:$errJs}}));';
+
+    if (Platform.isWindows) {
+      final state = _windowsWebViewKey.currentState;
+      if (state != null) {
+        await state.runJavaScript(js);
+      }
+      return;
+    }
+
+    final webView = _webView;
+    if (webView == null) return;
     try {
-      await webView.runJavaScript(
-        'window.dispatchEvent(new CustomEvent("posexNativePushStatus",{detail:{enabled:${status.enabled ? 'true' : 'false'},native:true,permissionGranted:${status.permissionGranted ? 'true' : 'false'},registered:${status.registeredWithServer ? 'true' : 'false'},hasFcmToken:${status.hasFcmToken ? 'true' : 'false'},error:$errJs}}));',
-      );
+      await webView.runJavaScript(js);
     } catch (_) {}
   }
 
@@ -734,11 +754,45 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         : null;
     final showStartupError =
         _bootstrapError != null && _bootstrapError!.trim().isNotEmpty;
+    final isWindowsBootstrapDone = Platform.isWindows && _printerManager != null;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (webView != null)
+        if (isWindowsBootstrapDone)
+          WindowsWebView(
+            key: _windowsWebViewKey,
+            url: kPosexUrl,
+            onBridgeMessage: _onBridgeMessage,
+            onPageFinished: () {
+              _webLoadTimeout?.cancel();
+              if (mounted) setState(() => _loading = false);
+              Future.delayed(const Duration(milliseconds: 1500), () {
+                if (mounted) {
+                  _syncAuthTokenFromWebView();
+                  _reportNativePushStatus();
+                }
+              });
+            },
+            onLoadingChanged: (loading) {
+              if (mounted) setState(() => _loading = loading);
+            },
+            onLoadFailed: (message) {
+              _webLoadTimeout?.cancel();
+              if (mounted) {
+                setState(() {
+                  _loading = false;
+                  if (_bootstrapError == null) {
+                    _setBootstrapError(
+                      'Web page failed to load: $message. '
+                      'Check your internet connection and that https://posex.lk is reachable.',
+                    );
+                  }
+                });
+              }
+            },
+          )
+        else if (!Platform.isWindows && webView != null)
           StableWebViewHost(
             key: _webViewHostKey,
             controller: webView,
@@ -836,6 +890,15 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
+        if (Platform.isWindows) {
+          final state = _windowsWebViewKey.currentState;
+          if (state != null && await state.canGoBack()) {
+            await state.goBack();
+          } else {
+            await SystemNavigator.pop();
+          }
+          return;
+        }
         if (webView != null && await webView.canGoBack()) {
           await webView.goBack();
         } else {

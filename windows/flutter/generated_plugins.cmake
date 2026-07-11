@@ -9,6 +9,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   permission_handler_windows
   print_bluetooth_thermal
   screen_retriever_windows
+  webview_windows
   window_manager
 )
 

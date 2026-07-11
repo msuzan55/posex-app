@@ -492,9 +492,17 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       onPageFinished: () {
         _webLoadTimeout?.cancel();
         if (mounted) setState(() => _loading = false);
-        _syncAuthTokenFromWebView();
-        _reportNativePushStatus();
-        if (!Platform.isWindows) {
+        if (Platform.isWindows) {
+          // Delay Javascript calls to let the page settle and prevent native WebView2 crash
+          Future.delayed(const Duration(milliseconds: 1500), () {
+            if (mounted) {
+              _syncAuthTokenFromWebView();
+              _reportNativePushStatus();
+            }
+          });
+        } else {
+          _syncAuthTokenFromWebView();
+          _reportNativePushStatus();
           _startBootstrapOnce();
         }
       },

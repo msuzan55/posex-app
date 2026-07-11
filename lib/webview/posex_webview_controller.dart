@@ -171,7 +171,16 @@ class PosexWebViewController {
   document.documentElement.style.setProperty('--safe-bottom', '0px');
   window.PosExNativeBridge = window.PosExNativeBridge || {
     postMessage: function(m){
-      window.flutter_inappwebview.callHandler('PosExNativeBridge', String(m));
+      var attempts = 0;
+      function send() {
+        if (window.flutter_inappwebview && window.flutter_inappwebview.callHandler) {
+          window.flutter_inappwebview.callHandler('PosExNativeBridge', String(m));
+        } else if (attempts < 50) {
+          attempts++;
+          setTimeout(send, 100);
+        }
+      }
+      send();
     }
   };
   var nativeClose = window.close;

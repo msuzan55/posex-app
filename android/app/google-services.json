@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "605381881810",
+    "project_id": "pos-pro-logging",
+    "storage_bucket": "pos-pro-logging.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:605381881810:android:d6d5a9ba17da8e04ff220b",
+        "android_client_info": {
+          "package_name": "lk.posex.posex_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "605381881810-ddbndphgtftulfkj4qp8st2iulomcp2a.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBInqIICsct4f4TkJZBGupYkqVaRxaQAkA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "605381881810-ddbndphgtftulfkj4qp8st2iulomcp2a.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

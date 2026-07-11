@@ -1,35 +1,69 @@
-# PosEx Windows App
+# PosEx App (Flutter)
 
-Simple **Windows** WebView wrapper for [PosEx](https://posex.lk).
+Native **Android** and **Windows** wrapper for [PosEx](https://posex.lk) — loads the web POS in a WebView with a built-in localhost print server on port **9753**.
 
-Loads `https://posex.lk/test/` in a native window (WebView2).
+## Features
 
-## Download (built by GitHub Actions)
+| Feature | Android | Windows |
+|---------|---------|---------|
+| PosEx web app (`https://posex.lk/test/`) | Yes | Yes |
+| Local print server (`127.0.0.1:9753`) | Yes | Yes |
+| Network printers | Yes | Yes |
+| USB printers | Yes | Yes (best-effort) |
+| Bluetooth printers | Yes | No |
+| Remote printing (WebSocket → localhost) | Yes | Yes |
+| Native push (FCM) | Yes | No (use PWA push in browser) |
+| In-app OTA updates (GitHub Releases) | APK | ZIP → restart |
 
-https://github.com/msuzan55/posex-app/releases/latest
-
-1. Download **posex-app-windows.zip**
-2. Unzip to a folder (e.g. `C:\PosEx\`) — do **not** run from inside the ZIP
-3. Open **`Launch PosEx.cmd`**
-4. If it fails to open: run **`vc_redist.x64.exe`**, install [WebView2](https://go.microsoft.com/fwlink/p/?LinkId=2124703), then retry
-5. Blank/crash: delete `%APPDATA%\posex_app\webview2` and open again
-
-## Local build (on a Windows PC)
+## Local dev
 
 ```bash
 cd posex-app
 flutter pub get
-dart run flutter_launcher_icons
+
+# Android (device/emulator)
+flutter run
+
+# Windows (requires Windows + Visual Studio / WebView2)
 flutter run -d windows
-flutter build windows --release
+
+flutter test
+flutter analyze
 ```
 
-Release output: `build/windows/x64/runner/Release/`
+**Windows requirements:** [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually preinstalled on Windows 10/11).
 
-## Publish from suzanpro → GitHub (triggers CI build)
+**Opening from ZIP/RAR:** If you double-click the exe inside an archive, PosEx automatically copies itself to `%LOCALAPPDATA%\PosEx` and restarts. For first install, **PosEx-Setup.exe** is still recommended.
+
+## CI (GitHub Actions)
+
+`.github/workflows/build-standalone.yml` builds on every push to `main`:
+
+- **Android:** signed release APK
+- **Windows:** `posex-app-windows.zip` (portable release folder)
+
+Both are attached to the GitHub Release `build-{run_number}` for in-app updates.
+
+## Publish monorepo → standalone GitHub repo
 
 ```bash
 /var/www/suzanpro/scripts/publish-posex-app-to-git.sh "your commit message"
 ```
 
-Repo: https://github.com/msuzan55/posex-app
+Standalone repo: https://github.com/msuzan55/posex-app
+
+## Project layout
+
+```
+lib/
+├── main.dart                 # WebView shell, update banner, print FAB
+├── webview/                  # Android + Windows WebView bridge
+├── print_server/             # HTTP server, printer manager, panel UI
+├── push/                     # FCM registration (Android)
+├── update/                   # GitHub OTA (APK / Windows ZIP)
+└── platform/                 # Permissions & platform feature flags
+```
+
+## API
+
+The embedded web app talks to `https://posex.lk`. The native bridge exposes `PosExNativeBridge` for auth token sync and push enable/status (Android).

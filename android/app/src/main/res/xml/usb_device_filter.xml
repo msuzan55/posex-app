@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Match any attached USB device so the user can grant "use by default"
+         for their thermal printer regardless of vendor/product id. -->
+    <usb-device />
+</resources>

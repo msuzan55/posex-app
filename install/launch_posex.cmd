@@ -23,8 +23,10 @@ if exist "%~dp0vc_redist.x64.exe" (
 echo.
 echo PosEx cannot start because Microsoft Visual C++ Runtime is missing.
 echo.
-echo Fix: download and run:
-echo   https://aka.ms/vs/17/release/vc_redist.x64.exe
+echo Fix:
+echo   1. Install PosEx using PosEx-Setup.exe  ^(recommended^)
+echo   2. Or download and run:
+echo      https://aka.ms/vs/17/release/vc_redist.x64.exe
 echo.
 pause
 exit /b 1

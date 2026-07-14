@@ -680,6 +680,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     if (windowsWebView != null) {
       await windowsWebView.setVisible(false);
     }
+    if (!mounted) return;
 
     try {
       await Navigator.of(context).push(

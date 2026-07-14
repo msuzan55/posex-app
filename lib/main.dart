@@ -140,10 +140,10 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   String? _bootstrapError;
   bool _showPreviousSessionNote = true;
   Key _webViewHostKey = UniqueKey();
-  Timer? _fabTimer;
   Timer? _probeTimer;
   Timer? _webLoadTimeout;
   Timer? _heartbeatTimer;
+  Timer? _fabTimer;
   VoidCallback? _printerManagerListener;
   UpdateInfo? _update;
   UpdateDownloadState _updateState = UpdateDownloadState.idle;
@@ -170,10 +170,20 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     } else {
       _initWebView();
     }
+    _scheduleHidePrintFab();
+  }
 
-    _fabTimer = Timer(const Duration(seconds: 5), () {
+  void _scheduleHidePrintFab() {
+    _fabTimer?.cancel();
+    _fabTimer = Timer(const Duration(seconds: 15), () {
       if (mounted) setState(() => _showPrintFab = false);
     });
+  }
+
+  void _revealPrintFab() {
+    if (!mounted) return;
+    setState(() => _showPrintFab = true);
+    _scheduleHidePrintFab();
   }
 
   @override
@@ -649,15 +659,65 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     } catch (_) {}
   }
 
-  void _openPrintPanel() {
+  Future<void> _openPrintPanel() async {
     final manager = _printerManager;
     final server = _printServer;
-    if (manager == null || server == null) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PrintServerPanel(
-          manager: manager,
-          server: server,
+    if (manager == null || server == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Print service is still starting. Try again in a moment.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Windows WebView is a native HWND layered above Flutter — it must be
+    // hidden before any route, or Print Server appears broken underneath it.
+    final windowsWebView = Platform.isWindows
+        ? _windowsWebViewKey.currentState
+        : null;
+    if (windowsWebView != null) {
+      await windowsWebView.setVisible(false);
+    }
+
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => PrintServerPanel(
+            manager: manager,
+            server: server,
+          ),
+        ),
+      );
+    } finally {
+      if (windowsWebView != null && mounted) {
+        await windowsWebView.setVisible(true);
+      }
+    }
+  }
+
+  /// Orange floating print button.
+  Widget _buildPrintButton() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _openPrintPanel,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF97316),
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.4),
+                blurRadius: 8,
+              ),
+            ],
+          ),
+          child: const Icon(Icons.print, color: Colors.white),
         ),
       ),
     );
@@ -755,52 +815,67 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     final showStartupError =
         _bootstrapError != null && _bootstrapError!.trim().isNotEmpty;
     final isWindowsBootstrapDone = Platform.isWindows && _printerManager != null;
+    // On Windows, leave only a narrow right gutter for the floating print
+    // button so the native WebView HWND cannot cover it. Use full height
+    // (no bottom strip) so it does not look like a toolbar.
+    final windowsFabRightInset =
+        Platform.isWindows && _showPrintFab ? 64.0 : 0.0;
+
+    Widget webLayer;
+    if (isWindowsBootstrapDone) {
+      webLayer = WindowsWebView(
+        key: _windowsWebViewKey,
+        url: kPosexUrl,
+        onBridgeMessage: _onBridgeMessage,
+        onPageFinished: () {
+          _webLoadTimeout?.cancel();
+          if (mounted) setState(() => _loading = false);
+          Future.delayed(const Duration(milliseconds: 1500), () {
+            if (mounted) {
+              _syncAuthTokenFromWebView();
+              _reportNativePushStatus();
+            }
+          });
+        },
+        onLoadingChanged: (loading) {
+          if (mounted) setState(() => _loading = loading);
+        },
+        onLoadFailed: (message) {
+          _webLoadTimeout?.cancel();
+          if (mounted) {
+            setState(() {
+              _loading = false;
+              if (_bootstrapError == null) {
+                _setBootstrapError(
+                  'Web page failed to load: $message. '
+                  'Check your internet connection and that https://posex.lk is reachable.',
+                );
+              }
+            });
+          }
+        },
+      );
+    } else if (!Platform.isWindows && webView != null) {
+      webLayer = StableWebViewHost(
+        key: _webViewHostKey,
+        controller: webView,
+      );
+    } else {
+      webLayer = const Center(
+        child: CircularProgressIndicator(color: Color(0xFFF97316)),
+      );
+    }
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (isWindowsBootstrapDone)
-          WindowsWebView(
-            key: _windowsWebViewKey,
-            url: kPosexUrl,
-            onBridgeMessage: _onBridgeMessage,
-            onPageFinished: () {
-              _webLoadTimeout?.cancel();
-              if (mounted) setState(() => _loading = false);
-              Future.delayed(const Duration(milliseconds: 1500), () {
-                if (mounted) {
-                  _syncAuthTokenFromWebView();
-                  _reportNativePushStatus();
-                }
-              });
-            },
-            onLoadingChanged: (loading) {
-              if (mounted) setState(() => _loading = loading);
-            },
-            onLoadFailed: (message) {
-              _webLoadTimeout?.cancel();
-              if (mounted) {
-                setState(() {
-                  _loading = false;
-                  if (_bootstrapError == null) {
-                    _setBootstrapError(
-                      'Web page failed to load: $message. '
-                      'Check your internet connection and that https://posex.lk is reachable.',
-                    );
-                  }
-                });
-              }
-            },
-          )
-        else if (!Platform.isWindows && webView != null)
-          StableWebViewHost(
-            key: _webViewHostKey,
-            controller: webView,
-          )
-        else
-          const Center(
-            child: CircularProgressIndicator(color: Color(0xFFF97316)),
-          ),
+        Positioned(
+          left: 0,
+          top: 0,
+          right: windowsFabRightInset,
+          bottom: 0,
+          child: webLayer,
+        ),
         if (_loading)
           const ColoredBox(
             color: Color(0xCC000000),
@@ -853,28 +928,21 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
           ),
         if (_showPrintFab)
           Positioned(
-            right: 12,
+            right: 8,
             bottom: bottomInset + 12,
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _openPrintPanel,
-                borderRadius: BorderRadius.circular(24),
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF97316),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.4),
-                        blurRadius: 8,
-                      ),
-                    ],
-                  ),
-                  child: const Icon(Icons.print, color: Colors.white),
-                ),
+            child: _buildPrintButton(),
+          )
+        else
+          Positioned(
+            right: 0,
+            bottom: 0,
+            width: 56,
+            height: 56,
+            child: MouseRegion(
+              onEnter: (_) => _revealPrintFab(),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _revealPrintFab,
               ),
             ),
           ),

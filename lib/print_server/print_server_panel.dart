@@ -74,51 +74,57 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
       body: ListenableBuilder(
         listenable: _m,
         builder: (context, _) {
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _statusCard(),
-              const SizedBox(height: 16),
-              const Text('Printers',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 4,
-                alignment: WrapAlignment.start,
+          return Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: ListView(
+                padding: const EdgeInsets.all(16),
                 children: [
-                  _addPrinterChip(
-                    icon: Icons.lan,
-                    label: 'Network',
-                    onPressed: _addNetworkDialog,
+                  _statusCard(),
+                  const SizedBox(height: 16),
+                  const Text('Printers',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    alignment: WrapAlignment.start,
+                    children: [
+                      _addPrinterChip(
+                        icon: Icons.lan,
+                        label: 'Network',
+                        onPressed: _addNetworkDialog,
+                      ),
+                      if (bluetoothPrinterSupported)
+                        _addPrinterChip(
+                          icon: Icons.bluetooth,
+                          label: 'Bluetooth',
+                          onPressed: _addBluetoothDialog,
+                        ),
+                      if (usbPrinterSupported)
+                        _addPrinterChip(
+                          icon: Icons.usb,
+                          label: 'USB',
+                          onPressed: _addUsbDialog,
+                        ),
+                    ],
                   ),
-                  if (bluetoothPrinterSupported)
-                    _addPrinterChip(
-                      icon: Icons.bluetooth,
-                      label: 'Bluetooth',
-                      onPressed: _addBluetoothDialog,
-                    ),
-                  if (usbPrinterSupported)
-                    _addPrinterChip(
-                      icon: Icons.usb,
-                      label: 'USB',
-                      onPressed: _addUsbDialog,
-                    ),
+                  const SizedBox(height: 8),
+                  if (_m.printers.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Text('No printers yet. $printPanelPlatformHint',
+                          style: const TextStyle(color: Colors.white54)),
+                    )
+                  else
+                    ..._m.printers.map(_printerTile),
                 ],
               ),
-              const SizedBox(height: 8),
-              if (_m.printers.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 24),
-                  child: Text('No printers yet. $printPanelPlatformHint',
-                      style: const TextStyle(color: Colors.white54)),
-                )
-              else
-                ..._m.printers.map(_printerTile),
-            ],
+            ),
           );
         },
       ),

@@ -119,6 +119,19 @@ class PosexWebViewController {
         useOnDownloadStart: Platform.isAndroid,
       ),
       shouldOverrideUrlLoading: (controller, action) async {
+        final url = action.request.url?.toString() ?? '';
+        if (Platform.isAndroid && NativeFileBridge.shouldOpenExternally(url)) {
+          unawaited(() async {
+            final result = await NativeFileBridge.openExternalUrl(url);
+            if (result['ok'] != true) {
+              await AppDiagnostics.log(
+                'WARN',
+                'External open failed: ${result['error'] ?? url}',
+              );
+            }
+          }());
+          return NavigationActionPolicy.CANCEL;
+        }
         return NavigationActionPolicy.ALLOW;
       },
       onDownloadStartRequest: (controller, request) async {
@@ -202,6 +215,7 @@ class PosexWebViewController {
                 mimeType: '${map['mimeType'] ?? 'application/octet-stream'}',
                 title: '${map['title'] ?? ''}',
                 text: '${map['text'] ?? ''}',
+                target: '${map['target'] ?? ''}',
               );
             },
           );
@@ -213,6 +227,17 @@ class PosexWebViewController {
                 base64: '${map['base64'] ?? ''}',
                 fileName: '${map['fileName'] ?? 'download.bin'}',
                 mimeType: '${map['mimeType'] ?? 'application/octet-stream'}',
+              );
+            },
+          );
+          controller.addJavaScriptHandler(
+            handlerName: 'PosExOpenWhatsApp',
+            callback: (args) async {
+              final map = _firstArgMap(args);
+              return NativeFileBridge.openWhatsApp(
+                phone: '${map['phone'] ?? map['phoneDigits'] ?? ''}',
+                text: '${map['text'] ?? ''}',
+                variant: '${map['variant'] ?? 'whatsapp'}',
               );
             },
           );
@@ -446,8 +471,16 @@ class PosexWebViewController {
   window.PosExNativeBridge = window.PosExNativeBridge || {};
   window.PosExNativeBridge.shareFile = nativeShareFile;
   window.PosExNativeBridge.saveFile = nativeSaveFile;
+  window.PosExNativeBridge.openWhatsApp = async function(opts) {
+    var result = await waitForHandler('PosExOpenWhatsApp', opts || {});
+    if (result && result.ok === false) {
+      throw new Error(result.error || 'Could not open WhatsApp');
+    }
+    return result;
+  };
   window.PosExNativeBridge.supportsFileShare = true;
   window.PosExNativeBridge.supportsFileSave = true;
+  window.PosExNativeBridge.supportsWhatsApp = true;
 
   var origShare = (typeof navigator.share === 'function')
     ? navigator.share.bind(navigator)

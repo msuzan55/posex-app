@@ -119,17 +119,6 @@ class WindowsWebViewState extends State<WindowsWebView> {
     }
   }
 
-  /// Hide/show the native Windows WebView HWND. Required before any Flutter
-  /// route overlays (widgets cannot draw above the WebView).
-  Future<void> setVisible(bool visible) async {
-    if (!_initialized) return;
-    try {
-      await _controller.setVisibility(visible);
-    } catch (e, st) {
-      await AppDiagnostics.logError('Windows WebView setVisibility failed', e, st);
-    }
-  }
-
   Future<bool> canGoBack() async {
     if (!_initialized) return false;
     try {

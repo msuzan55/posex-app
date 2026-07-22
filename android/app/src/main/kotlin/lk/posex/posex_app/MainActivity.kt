@@ -1,5 +1,9 @@
 package lk.posex.posex_app
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,6 +15,7 @@ import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Base64
 import android.widget.Toast
+import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -23,10 +28,19 @@ class MainActivity : FlutterActivity() {
         private const val PRINT_CHANNEL = "lk.posex.posex_app/print_service"
         private const val INSTALL_CHANNEL = "lk.posex.posex_app/apk_install"
         private const val FILE_CHANNEL = "lk.posex.posex_app/file_actions"
+
+        private const val DOWNLOAD_CHANNEL_ID = "posex_downloads"
+        private const val DOWNLOAD_NOTIFICATION_BASE = 9200
+
+        private const val PKG_WHATSAPP = "com.whatsapp"
+        private const val PKG_WHATSAPP_BUSINESS = "com.whatsapp.w4b"
     }
+
+    private var downloadNotifySeq = 0
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        ensureDownloadNotificationChannel()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PRINT_CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -93,7 +107,8 @@ class MainActivity : FlutterActivity() {
                                 ?: "application/octet-stream"
                             val title = call.argument<String>("title") ?: ""
                             val text = call.argument<String>("text") ?: ""
-                            shareFile(base64, fileName, mimeType, title, text)
+                            val target = call.argument<String>("target") ?: ""
+                            shareFile(base64, fileName, mimeType, title, text, target)
                             result.success(mapOf("ok" to true))
                         } catch (e: Exception) {
                             result.error("SHARE_FAILED", e.message, null)
@@ -111,20 +126,45 @@ class MainActivity : FlutterActivity() {
                             )
                             val mimeType = call.argument<String>("mimeType")
                                 ?: "application/octet-stream"
-                            val savedName = saveFileToDownloads(base64, fileName, mimeType)
-                            Toast.makeText(
-                                this,
-                                "Saved to Downloads: $savedName",
-                                Toast.LENGTH_LONG,
-                            ).show()
+                            val saved = saveFileToDownloads(base64, fileName, mimeType)
+                            showDownloadCompleteNotification(
+                                saved.displayName,
+                                saved.uri,
+                                saved.mimeType,
+                            )
                             result.success(
                                 mapOf(
                                     "ok" to true,
-                                    "fileName" to savedName,
+                                    "fileName" to saved.displayName,
+                                    "uri" to saved.uri.toString(),
                                 ),
                             )
                         } catch (e: Exception) {
                             result.error("SAVE_FAILED", e.message, null)
+                        }
+                    }
+                    "openWhatsApp" -> {
+                        try {
+                            val phone = call.argument<String>("phone") ?: ""
+                            val text = call.argument<String>("text") ?: ""
+                            val variant = call.argument<String>("variant") ?: "whatsapp"
+                            openWhatsApp(phone, text, variant)
+                            result.success(mapOf("ok" to true))
+                        } catch (e: Exception) {
+                            result.error("WHATSAPP_FAILED", e.message, null)
+                        }
+                    }
+                    "openExternalUrl" -> {
+                        try {
+                            val url = call.argument<String>("url") ?: ""
+                            if (url.isBlank()) {
+                                result.error("INVALID_URL", "URL is missing", null)
+                                return@setMethodCallHandler
+                            }
+                            openExternalUrl(url)
+                            result.success(mapOf("ok" to true))
+                        } catch (e: Exception) {
+                            result.error("OPEN_FAILED", e.message, null)
                         }
                     }
                     else -> result.notImplemented()
@@ -168,8 +208,6 @@ class MainActivity : FlutterActivity() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
-        // Grant read permission to every app that can handle the install intent
-        // (required on Samsung/Xiaomi and Android 11+ package visibility).
         val handlers = packageManager.queryIntentActivities(
             intent,
             PackageManager.MATCH_DEFAULT_ONLY,
@@ -188,14 +226,38 @@ class MainActivity : FlutterActivity() {
         startActivity(intent)
     }
 
+    private fun resolveWhatsAppPackage(targetOrVariant: String): String? {
+        val t = targetOrVariant.trim().lowercase()
+        return when {
+            t == "whatsapp_business" || t == "w4b" || t == PKG_WHATSAPP_BUSINESS ->
+                PKG_WHATSAPP_BUSINESS
+            t == "whatsapp" || t == "wa" || t == PKG_WHATSAPP ->
+                PKG_WHATSAPP
+            t.isBlank() -> null
+            else -> targetOrVariant.trim()
+        }
+    }
+
+    private fun isPackageInstalled(pkg: String): Boolean {
+        return try {
+            packageManager.getPackageInfo(pkg, 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun shareFile(
         base64: String,
         fileName: String,
         mimeType: String,
         title: String,
         text: String,
+        target: String,
     ) {
         val intent = Intent(Intent.ACTION_SEND)
+        var shareUri: Uri? = null
+
         if (base64.isNotBlank()) {
             val bytes = decodeBase64(base64)
             if (bytes.isEmpty()) {
@@ -210,22 +272,11 @@ class MainActivity : FlutterActivity() {
                 "$packageName.fileprovider",
                 file,
             )
+            shareUri = uri
             intent.type = mimeType.ifBlank { "application/octet-stream" }
             intent.putExtra(Intent.EXTRA_STREAM, uri)
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             intent.clipData = android.content.ClipData.newUri(contentResolver, fileName, uri)
-
-            val handlers = packageManager.queryIntentActivities(
-                intent,
-                PackageManager.MATCH_DEFAULT_ONLY,
-            )
-            for (resolveInfo in handlers) {
-                grantUriPermission(
-                    resolveInfo.activityInfo.packageName,
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-            }
         } else {
             intent.type = "text/plain"
         }
@@ -236,6 +287,49 @@ class MainActivity : FlutterActivity() {
         if (text.isNotBlank()) {
             intent.putExtra(Intent.EXTRA_TEXT, text)
         }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        val preferredPkg = resolveWhatsAppPackage(target)
+        if (!preferredPkg.isNullOrBlank() && isPackageInstalled(preferredPkg)) {
+            shareUri?.let {
+                grantUriPermission(
+                    preferredPkg,
+                    it,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            intent.setPackage(preferredPkg)
+            try {
+                startActivity(intent)
+                return
+            } catch (_: ActivityNotFoundException) {
+                intent.setPackage(null)
+            }
+        }
+
+        // Prefer WhatsApp in chooser when no explicit target (bill share).
+        if (preferredPkg.isNullOrBlank()) {
+            for (pkg in listOf(PKG_WHATSAPP, PKG_WHATSAPP_BUSINESS)) {
+                if (!isPackageInstalled(pkg)) continue
+                shareUri?.let {
+                    grantUriPermission(pkg, it, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            }
+        } else {
+            val handlers = packageManager.queryIntentActivities(
+                intent,
+                PackageManager.MATCH_DEFAULT_ONLY,
+            )
+            for (resolveInfo in handlers) {
+                shareUri?.let {
+                    grantUriPermission(
+                        resolveInfo.activityInfo.packageName,
+                        it,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                }
+            }
+        }
 
         val chooser = Intent.createChooser(
             intent,
@@ -244,11 +338,122 @@ class MainActivity : FlutterActivity() {
         startActivity(chooser)
     }
 
+    private fun openWhatsApp(phone: String, text: String, variant: String) {
+        val digits = phone.replace(Regex("\\D"), "")
+        val preferred = resolveWhatsAppPackage(variant) ?: PKG_WHATSAPP
+        val fallbackPkg = if (preferred == PKG_WHATSAPP_BUSINESS) PKG_WHATSAPP else PKG_WHATSAPP_BUSINESS
+        val packages = listOf(preferred, fallbackPkg).distinct().filter { isPackageInstalled(it) }
+
+        val apiUri = if (digits.isNotBlank()) {
+            Uri.parse(
+                "https://api.whatsapp.com/send?phone=$digits&text=${Uri.encode(text)}",
+            )
+        } else {
+            Uri.parse("https://api.whatsapp.com/send?text=${Uri.encode(text)}")
+        }
+        val schemeUri = if (digits.isNotBlank()) {
+            Uri.parse("whatsapp://send?phone=$digits&text=${Uri.encode(text)}")
+        } else {
+            Uri.parse("whatsapp://send?text=${Uri.encode(text)}")
+        }
+
+        for (pkg in packages) {
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, apiUri)
+                        .setPackage(pkg)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                return
+            } catch (_: Exception) {
+                // try next
+            }
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW, schemeUri)
+                        .setPackage(pkg)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                return
+            } catch (_: Exception) {
+                // try next
+            }
+        }
+
+        try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, schemeUri)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return
+        } catch (_: Exception) {
+            // fall through
+        }
+
+        try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, apiUri)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return
+        } catch (_: Exception) {
+            // fall through
+        }
+
+        throw IllegalStateException("WhatsApp is not installed on this device")
+    }
+
+    private fun openExternalUrl(url: String) {
+        val trimmed = url.trim()
+        if (trimmed.startsWith("intent:", ignoreCase = true)) {
+            val intent = Intent.parseUri(trimmed, Intent.URI_INTENT_SCHEME)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                startActivity(intent)
+                return
+            } catch (_: ActivityNotFoundException) {
+                val fallback = intent.getStringExtra("browser_fallback_url")
+                if (!fallback.isNullOrBlank()) {
+                    startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(fallback))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                    return
+                }
+                throw IllegalStateException("No app can open this link")
+            }
+        }
+
+        val lower = trimmed.lowercase()
+        if (lower.startsWith("whatsapp:") ||
+            lower.contains("api.whatsapp.com") ||
+            lower.contains("wa.me") ||
+            lower.contains("web.whatsapp.com")
+        ) {
+            val uri = Uri.parse(trimmed)
+            val phone = uri.getQueryParameter("phone") ?: ""
+            val text = uri.getQueryParameter("text") ?: ""
+            openWhatsApp(phone, text, "whatsapp")
+            return
+        }
+
+        startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(trimmed))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
+    private data class SavedDownload(
+        val displayName: String,
+        val uri: Uri,
+        val mimeType: String,
+    )
+
     private fun saveFileToDownloads(
         base64: String,
         fileName: String,
         mimeType: String,
-    ): String {
+    ): SavedDownload {
         val bytes = decodeBase64(base64)
         if (bytes.isEmpty()) {
             throw IllegalStateException("Empty file data")
@@ -271,7 +476,7 @@ class MainActivity : FlutterActivity() {
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
             resolver.update(uri, values, null, null)
-            return fileName
+            return SavedDownload(fileName, uri, safeMime)
         }
 
         @Suppress("DEPRECATION")
@@ -298,7 +503,91 @@ class MainActivity : FlutterActivity() {
             arrayOf(safeMime),
             null,
         )
-        return target.name
+        val uri = try {
+            FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                target,
+            )
+        } catch (_: Exception) {
+            @Suppress("DEPRECATION")
+            Uri.fromFile(target)
+        }
+        return SavedDownload(target.name, uri, safeMime)
+    }
+
+    private fun ensureDownloadNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        val existing = manager.getNotificationChannel(DOWNLOAD_CHANNEL_ID)
+        if (existing != null) return
+        val channel = NotificationChannel(
+            DOWNLOAD_CHANNEL_ID,
+            "Downloads",
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply {
+            description = "PDF and file download completed"
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun showDownloadCompleteNotification(
+        fileName: String,
+        uri: Uri,
+        mimeType: String,
+    ) {
+        ensureDownloadNotificationChannel()
+
+        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, mimeType)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        // Grant read to potential viewers (PDF apps, Files, etc.).
+        val handlers = packageManager.queryIntentActivities(
+            viewIntent,
+            PackageManager.MATCH_DEFAULT_ONLY,
+        )
+        for (resolveInfo in handlers) {
+            grantUriPermission(
+                resolveInfo.activityInfo.packageName,
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE
+            } else {
+                0
+            }
+        val contentIntent = PendingIntent.getActivity(
+            this,
+            downloadNotifySeq,
+            viewIntent,
+            flags,
+        )
+
+        val notification = NotificationCompat.Builder(this, DOWNLOAD_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Download complete")
+            .setContentText(fileName)
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText("$fileName saved to Downloads. Tap to open."),
+            )
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(contentIntent)
+            .build()
+
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        val id = DOWNLOAD_NOTIFICATION_BASE + (downloadNotifySeq++ % 1000)
+        manager.notify(id, notification)
+
+        Toast.makeText(this, "Saved: $fileName", Toast.LENGTH_SHORT).show()
     }
 
     private fun decodeBase64(value: String): ByteArray {

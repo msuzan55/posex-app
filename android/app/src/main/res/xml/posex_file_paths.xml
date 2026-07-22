@@ -4,4 +4,6 @@
     <cache-path name="cache" path="." />
     <external-files-path name="external_files" path="." />
     <external-cache-path name="external_cache" path="." />
+    <!-- Public Downloads (legacy API < 29 notification / open) -->
+    <external-path name="external_download" path="Download/" />
 </paths>

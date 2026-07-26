@@ -6,16 +6,43 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../firebase_options.dart';
 
 const _apiBase = 'https://posex.lk';
 const _fcmEndpointPrefix = 'fcm-native:';
+const _channelId = 'posex_push';
+const _prefsPrefix = 'posex_push_group_v1_';
+const _maxGroupedItems = 8;
 
-/// Background FCM handler (top-level).
+const _groupLabels = <String, String>{
+  'sales': 'Sales',
+  'edited_bills': 'Edited bills',
+  'exchange_tokens': 'Exchange tokens',
+  'refunds': 'Refunds',
+  'supplier_bills': 'Supplier bills',
+  'new_suppliers': 'New suppliers',
+  'expenses': 'Expenses',
+  'cash_register_closed': 'Cash register closed',
+  'cash_register_opened': 'Cash register opened',
+  'daily_totals': 'Daily totals',
+  'employee_clock': 'Employee clock',
+  'new_employees': 'New employees',
+  'employee_loans': 'Employee loans',
+  'employee_dayoffs': 'Employee day-offs',
+  'salary_paid': 'Salary paid',
+  'new_customers': 'New customers',
+  'credit_payments': 'Credit payments',
+  'held_bills': 'Held bills',
+};
+
+/// Background FCM handler (top-level) — shows grouped local notifications.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await PushRegistrationService.ensureLocalNotificationsReady();
+  await PushRegistrationService.displayFromRemoteMessage(message);
 }
 
 class NativePushStatus {
@@ -41,11 +68,32 @@ class PushRegistrationService {
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
   static bool _firebaseReady = false;
+  static bool _localReady = false;
   static String? _authToken;
   static bool _registeredWithServer = false;
   static String? _lastError;
 
   static bool get isRegisteredWithServer => _registeredWithServer;
+
+  static Future<void> ensureLocalNotificationsReady() async {
+    if (_localReady) return;
+    const androidInit = AndroidInitializationSettings('@drawable/ic_stat_print');
+    await _localNotifications.initialize(
+      const InitializationSettings(android: androidInit),
+      onDidReceiveNotificationResponse: (_) {},
+    );
+    final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _channelId,
+        'PosEx notifications',
+        description: 'Sales, refunds, register and employee alerts',
+        importance: Importance.high,
+      ),
+    );
+    _localReady = true;
+  }
 
   static Future<bool> _ensureFirebase() async {
     if (!Platform.isAndroid) {
@@ -60,14 +108,9 @@ class PushRegistrationService {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      await ensureLocalNotificationsReady();
 
-      const androidInit = AndroidInitializationSettings('@drawable/ic_stat_print');
-      await _localNotifications.initialize(
-        const InitializationSettings(android: androidInit),
-        onDidReceiveNotificationResponse: (_) {},
-      );
-
-      FirebaseMessaging.onMessage.listen(_showForegroundNotification);
+      FirebaseMessaging.onMessage.listen(displayFromRemoteMessage);
       FirebaseMessaging.onMessageOpenedApp.listen((_) {});
       FirebaseMessaging.instance.onTokenRefresh.listen(_registerToken);
 
@@ -231,21 +274,76 @@ class PushRegistrationService {
     );
   }
 
-  static Future<void> _showForegroundNotification(RemoteMessage message) async {
-    final n = message.notification;
-    if (n == null) return;
-    const details = AndroidNotificationDetails(
-      'posex_push',
+  /// Show / update a grouped notification from an FCM message.
+  static Future<void> displayFromRemoteMessage(RemoteMessage message) async {
+    try {
+      await ensureLocalNotificationsReady();
+      final data = message.data;
+      final n = message.notification;
+      final title = (data['title'] ?? n?.title ?? 'PosEx').toString().trim();
+      final body = (data['body'] ?? n?.body ?? 'New notification').toString().trim();
+      final ntype = (data['notification_type'] ?? '').toString().trim();
+      await _showGroupedNotification(
+        title: title.isEmpty ? 'PosEx' : title,
+        body: body.isEmpty ? 'New notification' : body,
+        notificationType: ntype,
+      );
+    } catch (e) {
+      debugPrint('[Push] display failed: $e');
+    }
+  }
+
+  static Future<void> _showGroupedNotification({
+    required String title,
+    required String body,
+    required String notificationType,
+  }) async {
+    final groupKey = notificationType.isNotEmpty ? notificationType : 'general';
+    final label = _groupLabels[groupKey] ?? title;
+    final lines = await _appendGroupLine(groupKey, body);
+    final count = lines.length;
+    final showTitle = count > 1 ? '$label ($count)' : title;
+    final summary = count > 1 ? '$count new $label' : body;
+    final notificationId = groupKey.hashCode & 0x7fffffff;
+
+    final details = AndroidNotificationDetails(
+      _channelId,
       'PosEx notifications',
+      channelDescription: 'Sales, refunds, register and employee alerts',
       importance: Importance.high,
       priority: Priority.high,
       icon: '@drawable/ic_stat_print',
+      groupKey: 'posex_$groupKey',
+      setAsGroupSummary: count > 1,
+      styleInformation: InboxStyleInformation(
+        lines,
+        contentTitle: showTitle,
+        summaryText: summary,
+      ),
+      autoCancel: true,
     );
+
     await _localNotifications.show(
-      message.hashCode,
-      n.title,
-      n.body,
-      const NotificationDetails(android: details),
+      notificationId,
+      showTitle,
+      count > 1 ? lines.last : body,
+      NotificationDetails(android: details),
+      payload: groupKey,
     );
+  }
+
+  static Future<List<String>> _appendGroupLine(String groupKey, String line) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$_prefsPrefix$groupKey';
+    final existing = prefs.getStringList(key) ?? <String>[];
+    final cleaned = line.trim();
+    if (cleaned.isNotEmpty) {
+      existing.add(cleaned);
+    }
+    final trimmed = existing.length > _maxGroupedItems
+        ? existing.sublist(existing.length - _maxGroupedItems)
+        : existing;
+    await prefs.setStringList(key, trimmed);
+    return trimmed;
   }
 }

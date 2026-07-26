@@ -17,6 +17,7 @@ import 'print_server/print_http_server.dart';
 import 'print_server/print_server_panel.dart';
 import 'print_server/printer_manager.dart';
 import 'print_server/printer_store.dart';
+import 'push/push_navigation.dart';
 import 'push/push_registration_service.dart';
 import 'update/update_service.dart';
 import 'update/windows_install_paths.dart';
@@ -156,6 +157,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   bool _bootstrapStarted = false;
   bool _settingsFabVisible = true;
   Timer? _settingsFabHideTimer;
+  String? _pendingPushPage;
+  Timer? _pendingPushRetryTimer;
 
   static const _settingsFabVisibleFor = Duration(seconds: 10);
 
@@ -213,6 +216,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     _webLoadTimeout?.cancel();
     _heartbeatTimer?.cancel();
     _settingsFabHideTimer?.cancel();
+    _pendingPushRetryTimer?.cancel();
     final listener = _printerManagerListener;
     final manager = _printerManager;
     if (listener != null && manager != null) {
@@ -293,6 +297,68 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
 })();
 ''');
     } catch (_) {}
+    await _tryDeliverPushNavigation();
+  }
+
+  void _onPushOpened(String groupKey) {
+    final page = pageForNotificationType(groupKey);
+    _pendingPushPage = page;
+    unawaited(_tryDeliverPushNavigation());
+  }
+
+  Future<void> _tryDeliverPushNavigation() async {
+    final page = _pendingPushPage;
+    if (page == null || page.isEmpty) return;
+
+    final js = '''
+(function(){
+  try{
+    var page=${jsonEncodeForJs(page)};
+    window.history.pushState({ page: page }, '', window.location.href);
+    window.dispatchEvent(new CustomEvent('navigateToPage', { detail: { page: page } }));
+    return true;
+  }catch(e){ return false; }
+})();
+''';
+
+    try {
+      if (Platform.isWindows) {
+        final state = _windowsWebViewKey.currentState;
+        if (state == null) {
+          _schedulePushNavigationRetry();
+          return;
+        }
+        await state.runJavaScript(js);
+      } else {
+        final webView = _webView;
+        if (webView == null || _loading) {
+          _schedulePushNavigationRetry();
+          return;
+        }
+        await webView.runJavaScript(js);
+      }
+      _pendingPushPage = null;
+      _pendingPushRetryTimer?.cancel();
+    } catch (_) {
+      _schedulePushNavigationRetry();
+    }
+  }
+
+  void _schedulePushNavigationRetry() {
+    _pendingPushRetryTimer?.cancel();
+    _pendingPushRetryTimer = Timer(const Duration(milliseconds: 800), () {
+      unawaited(_tryDeliverPushNavigation());
+    });
+  }
+
+  /// Quote a Dart string as a JS string literal.
+  static String jsonEncodeForJs(String value) {
+    final escaped = value
+        .replaceAll('\\', '\\\\')
+        .replaceAll("'", "\\'")
+        .replaceAll('\n', '\\n')
+        .replaceAll('\r', '\\r');
+    return "'$escaped'";
   }
 
   Future<void> _syncPrintForegroundService() async {
@@ -345,9 +411,11 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         }
       }
 
+      PushRegistrationService.onOpenFromPush = _onPushOpened;
       unawaited(() async {
         await PushRegistrationService.init();
         await PushRegistrationService.onAppOpened();
+        await _tryDeliverPushNavigation();
       }());
 
       final printStarted = await server.start();
@@ -536,12 +604,14 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
             if (mounted) {
               _syncAuthTokenFromWebView();
               _reportNativePushStatus();
+              unawaited(_tryDeliverPushNavigation());
             }
           });
         } else {
           _syncAuthTokenFromWebView();
           _reportNativePushStatus();
           _startBootstrapOnce();
+          unawaited(_tryDeliverPushNavigation());
         }
       },
       onLoadingChanged: (loading) {
@@ -852,6 +922,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                 if (mounted) {
                   _syncAuthTokenFromWebView();
                   _reportNativePushStatus();
+                  unawaited(_tryDeliverPushNavigation());
                 }
               });
             },

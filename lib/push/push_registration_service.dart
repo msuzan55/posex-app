@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
@@ -11,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../firebase_options.dart';
 import '../platform/posex_environment.dart';
+import 'push_navigation.dart';
 
 const _apiBase = 'https://posex.lk';
 const _fcmEndpointPrefix = 'fcm-native:';
@@ -20,6 +22,7 @@ const _seenIdsKey = 'posex_push_seen_ids_v1';
 const _maxGroupedItems = 8;
 const _maxSeenIds = 80;
 const _nativePushChannel = MethodChannel('lk.posex.posex_app/grouped_push');
+const _notificationIcon = '@mipmap/ic_launcher';
 
 const _groupLabels = <String, String>{
   'sales': 'Sales',
@@ -84,6 +87,9 @@ class PushRegistrationService {
   static bool _registeredWithServer = false;
   static String? _lastError;
 
+  /// Called when the user opens a push (groupKey = notification_type).
+  static void Function(String groupKey)? onOpenFromPush;
+
   static bool get isRegisteredWithServer => _registeredWithServer;
 
   static int _notificationIdForGroup(String groupKey) =>
@@ -91,7 +97,7 @@ class PushRegistrationService {
 
   static Future<void> ensureLocalNotificationsReady() async {
     if (_localReady) return;
-    const androidInit = AndroidInitializationSettings('@drawable/ic_stat_print');
+    const androidInit = AndroidInitializationSettings(_notificationIcon);
     await _localNotifications.initialize(
       const InitializationSettings(android: androidInit),
       onDidReceiveNotificationResponse: _onNotificationTapped,
@@ -114,13 +120,45 @@ class PushRegistrationService {
 
   @pragma('vm:entry-point')
   static void _onNotificationTappedBackground(NotificationResponse response) {
+    final key = (response.payload ?? '').trim();
     // ignore: discarded_futures
-    clearGroup(response.payload);
+    clearGroup(key.isEmpty ? null : key);
   }
 
   static void _onNotificationTapped(NotificationResponse response) {
+    final key = (response.payload ?? 'general').trim();
     // ignore: discarded_futures
-    clearGroup(response.payload);
+    _handleOpenFromPush(key.isEmpty ? 'general' : key);
+  }
+
+  static Future<void> _handleOpenFromPush(String groupKey) async {
+    final key = groupKey.trim().isEmpty ? 'general' : groupKey.trim();
+    await clearGroup(key);
+    onOpenFromPush?.call(key);
+  }
+
+  /// Wire native → Dart open-from-push + drain any cold-start pending tap.
+  static Future<void> bindNativeOpenHandler() async {
+    if (!Platform.isAndroid) return;
+    _nativePushChannel.setMethodCallHandler((call) async {
+      if (call.method == 'openFromPush') {
+        final args = call.arguments;
+        String key = 'general';
+        if (args is Map) {
+          key = (args['groupKey'] ?? 'general').toString().trim();
+        }
+        await _handleOpenFromPush(key.isEmpty ? 'general' : key);
+        return null;
+      }
+      return null;
+    });
+    try {
+      final pending = await _nativePushChannel.invokeMethod<String>('getPendingPushOpen');
+      final key = (pending ?? '').trim();
+      if (key.isNotEmpty) {
+        await _handleOpenFromPush(key);
+      }
+    } catch (_) {}
   }
 
   /// Clear stored lines + dismiss tray notification for a group (or all).
@@ -182,7 +220,7 @@ class PushRegistrationService {
       FirebaseMessaging.onMessage.listen((_) {});
       FirebaseMessaging.onMessageOpenedApp.listen((message) async {
         final ntype = (message.data['notification_type'] ?? '').toString().trim();
-        await clearGroup(ntype.isEmpty ? 'general' : ntype);
+        await _handleOpenFromPush(ntype.isEmpty ? 'general' : ntype);
       });
       FirebaseMessaging.instance.onTokenRefresh.listen(_registerToken);
 
@@ -196,6 +234,7 @@ class PushRegistrationService {
   }
 
   static Future<void> init() async {
+    await bindNativeOpenHandler();
     if (!await _ensureFirebase()) return;
     await FirebaseMessaging.instance.requestPermission(
       alert: true,
@@ -203,9 +242,19 @@ class PushRegistrationService {
       sound: true,
     );
     await onAppOpened();
+    final initial = await FirebaseMessaging.instance.getInitialMessage();
+    if (initial != null) {
+      final ntype =
+          (initial.data['notification_type'] ?? '').toString().trim();
+      await _handleOpenFromPush(ntype.isEmpty ? 'general' : ntype);
+    }
     final token = await FirebaseMessaging.instance.getToken();
     if (token != null) await _registerToken(token);
   }
+
+  /// Dashboard page id for a notification_type (used by the WebView shell).
+  static String pageForType(String notificationType) =>
+      pageForNotificationType(notificationType);
 
   static Future<void> setAuthToken(String? token) async {
     _authToken = (token != null && token.trim().isNotEmpty) ? token.trim() : null;
@@ -435,7 +484,8 @@ class PushRegistrationService {
       channelDescription: 'Sales, refunds, register and employee alerts',
       importance: Importance.high,
       priority: Priority.high,
-      icon: '@drawable/ic_stat_print',
+      icon: _notificationIcon,
+      color: const Color(0xFF0F6B52),
       category: AndroidNotificationCategory.status,
       groupKey: 'posex_$groupKey',
       // One InboxStyle tray item per type; lines stack with newest on top.

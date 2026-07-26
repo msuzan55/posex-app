@@ -2,22 +2,16 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
-/// Android foreground service — keeps the app process alive for remote printing.
+/// Android foreground service — previously kept a persistent "printers connected"
+/// tray notification. Disabled: print server still runs while the app is open.
 class PrintForegroundService {
   PrintForegroundService._();
 
   static const _channel = MethodChannel('lk.posex.posex_app/print_service');
 
   static Future<void> start({int connectedCount = 0}) async {
-    if (!Platform.isAndroid) return;
-    if (connectedCount <= 0) return;
-    try {
-      await _channel.invokeMethod<void>('startForeground', {
-        'connectedCount': connectedCount,
-      });
-    } catch (_) {
-      // Non-fatal — print server still runs while app is foregrounded.
-    }
+    // Do not show an ongoing printer-connected notification.
+    await stop();
   }
 
   static Future<void> stop() async {

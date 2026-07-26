@@ -5,6 +5,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -99,21 +102,38 @@ object PosexGroupedPush {
             .setSummaryText(summary)
         newestFirst.forEach { inbox.addLine(it) }
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_print)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(showTitle)
             .setContentText(latest)
             .setStyle(inbox)
+            .setColor(Color.parseColor("#0F6B52"))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setAutoCancel(true)
             .setContentIntent(contentPi)
             .setGroup("posex_$groupKey")
             .setOnlyAlertOnce(false)
-            .build()
+
+        appIconBitmap(context)?.let { builder.setLargeIcon(it) }
 
         NotificationManagerCompat.from(context)
-            .notify(notificationIdFor(groupKey), notification)
+            .notify(notificationIdFor(groupKey), builder.build())
+    }
+
+    private fun appIconBitmap(context: Context): Bitmap? {
+        return try {
+            val drawable = context.packageManager.getApplicationIcon(context.applicationInfo)
+            val w = if (drawable.intrinsicWidth > 0) drawable.intrinsicWidth else 192
+            val h = if (drawable.intrinsicHeight > 0) drawable.intrinsicHeight else 192
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+            bmp
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun clearGroup(context: Context, groupKey: String?) {

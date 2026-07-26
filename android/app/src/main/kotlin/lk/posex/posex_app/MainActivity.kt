@@ -35,9 +35,13 @@ class MainActivity : FlutterActivity() {
 
         private const val PKG_WHATSAPP = "com.whatsapp"
         private const val PKG_WHATSAPP_BUSINESS = "com.whatsapp.w4b"
+
+        @Volatile
+        private var pendingPushGroupKey: String? = null
     }
 
     private var downloadNotifySeq = 0
+    private var pushChannel: MethodChannel? = null
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,10 +58,34 @@ class MainActivity : FlutterActivity() {
         if (intent == null) return
         if (intent.action != PosexGroupedPush.ACTION_OPEN) return
         val groupKey = intent.getStringExtra(PosexGroupedPush.EXTRA_GROUP_KEY)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
         PosexGroupedPush.clearGroup(this, groupKey)
         // Prevent re-clearing on rotation / re-delivery.
         intent.removeExtra(PosexGroupedPush.EXTRA_GROUP_KEY)
         intent.action = null
+        if (groupKey != null) {
+            pendingPushGroupKey = groupKey
+            deliverPendingPushOpen()
+        }
+    }
+
+    private fun deliverPendingPushOpen() {
+        val key = pendingPushGroupKey ?: return
+        val channel = pushChannel ?: return
+        channel.invokeMethod(
+            "openFromPush",
+            mapOf("groupKey" to key),
+            object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    pendingPushGroupKey = null
+                }
+
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {}
+
+                override fun notImplemented() {}
+            },
+        )
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -65,8 +93,8 @@ class MainActivity : FlutterActivity() {
         ensureDownloadNotificationChannel()
         PosexGroupedPush.ensureChannel(this)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PUSH_CHANNEL)
-            .setMethodCallHandler { call, result ->
+        pushChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PUSH_CHANNEL)
+        pushChannel?.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "clearGroup" -> {
                         val key = call.argument<String>("groupKey")
@@ -77,9 +105,15 @@ class MainActivity : FlutterActivity() {
                         PosexGroupedPush.clearGroup(this, null)
                         result.success(null)
                     }
+                    "getPendingPushOpen" -> {
+                        val key = pendingPushGroupKey
+                        pendingPushGroupKey = null
+                        result.success(key)
+                    }
                     else -> result.notImplemented()
                 }
             }
+        deliverPendingPushOpen()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PRINT_CHANNEL)
             .setMethodCallHandler { call, result ->

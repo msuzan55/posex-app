@@ -112,7 +112,13 @@ class PrintHttpServer {
             status: 400);
       }
 
-      final error = await _manager.sendToRole(barcode: barcode, bytes: bytes);
+      // Bound wait so a stuck spooler cannot hang the WebView forever.
+      final error = await _manager
+          .sendToRole(barcode: barcode, bytes: bytes)
+          .timeout(
+            const Duration(seconds: 25),
+            onTimeout: () => 'Print timed out',
+          );
       if (error == null) {
         return _json({'ok': true, 'status': 'success'});
       }

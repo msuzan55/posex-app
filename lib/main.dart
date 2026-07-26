@@ -178,9 +178,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     }
   }
 
-  /// Show the Android settings FAB briefly, then hide it.
+  /// Show settings control briefly (Android FAB / Windows bar), then hide it.
   void _revealSettingsFabTemporarily() {
-    if (Platform.isWindows) return;
     _settingsFabHideTimer?.cancel();
     if (mounted && !_settingsFabVisible) {
       setState(() => _settingsFabVisible = true);
@@ -1059,6 +1058,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                     ),
             ),
             if (Platform.isWindows &&
+                _settingsFabVisible &&
                 (_bootstrapError == null || _bootstrapError!.trim().isEmpty))
               _buildWindowsSettingsBar(),
           ],

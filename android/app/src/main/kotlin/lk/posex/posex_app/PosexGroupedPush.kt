@@ -67,11 +67,11 @@ object PosexGroupedPush {
     fun show(context: Context, title: String, body: String, notificationType: String) {
         val groupKey = notificationType.trim().ifEmpty { "general" }
         val cleaned = body.trim()
-        if (cleaned.isEmpty) return
+        if (cleaned.isEmpty()) return
 
         ensureChannel(context)
         val lines = appendLine(context, groupKey, cleaned)
-        if (lines.isEmpty) return
+        if (lines.isEmpty()) return
 
         val newestFirst = lines.asReversed()
         val latest = newestFirst.first()

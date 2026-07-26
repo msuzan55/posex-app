@@ -41,12 +41,21 @@ const _groupLabels = <String, String>{
   'general': 'PosEx',
 };
 
-/// Background FCM handler (top-level) — shows grouped local notifications.
+/// Background FCM handler (top-level).
+/// When FCM includes a system `notification` block, Android already shows it —
+/// skip a second local banner. Data-only messages still get InboxStyle here.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  await PushRegistrationService.ensureLocalNotificationsReady();
-  await PushRegistrationService.displayFromRemoteMessage(message);
+  if (message.notification != null) {
+    return;
+  }
+  try {
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    await PushRegistrationService.ensureLocalNotificationsReady();
+    await PushRegistrationService.displayFromRemoteMessage(message);
+  } catch (e) {
+    debugPrint('[Push] background handler failed: $e');
+  }
 }
 
 class NativePushStatus {

@@ -28,6 +28,7 @@ class MainActivity : FlutterActivity() {
         private const val PRINT_CHANNEL = "lk.posex.posex_app/print_service"
         private const val INSTALL_CHANNEL = "lk.posex.posex_app/apk_install"
         private const val FILE_CHANNEL = "lk.posex.posex_app/file_actions"
+        private const val PUSH_CHANNEL = "lk.posex.posex_app/grouped_push"
 
         private const val DOWNLOAD_CHANNEL_ID = "posex_downloads"
         private const val DOWNLOAD_NOTIFICATION_BASE = 9200
@@ -38,9 +39,47 @@ class MainActivity : FlutterActivity() {
 
     private var downloadNotifySeq = 0
 
+    override fun onCreate(savedInstanceState: android.os.Bundle?) {
+        super.onCreate(savedInstanceState)
+        handlePushIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handlePushIntent(intent)
+    }
+
+    private fun handlePushIntent(intent: Intent?) {
+        if (intent == null) return
+        if (intent.action != PosexGroupedPush.ACTION_OPEN) return
+        val groupKey = intent.getStringExtra(PosexGroupedPush.EXTRA_GROUP_KEY)
+        PosexGroupedPush.clearGroup(this, groupKey)
+        // Prevent re-clearing on rotation / re-delivery.
+        intent.removeExtra(PosexGroupedPush.EXTRA_GROUP_KEY)
+        intent.action = null
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ensureDownloadNotificationChannel()
+        PosexGroupedPush.ensureChannel(this)
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PUSH_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "clearGroup" -> {
+                        val key = call.argument<String>("groupKey")
+                        PosexGroupedPush.clearGroup(this, key)
+                        result.success(null)
+                    }
+                    "clearAll" -> {
+                        PosexGroupedPush.clearGroup(this, null)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PRINT_CHANNEL)
             .setMethodCallHandler { call, result ->

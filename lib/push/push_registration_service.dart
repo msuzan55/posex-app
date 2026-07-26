@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,7 +17,9 @@ const _fcmEndpointPrefix = 'fcm-native:';
 const _channelId = 'posex_push';
 const _prefsPrefix = 'posex_push_group_v1_';
 const _seenIdsKey = 'posex_push_seen_ids_v1';
+const _maxGroupedItems = 8;
 const _maxSeenIds = 80;
+const _nativePushChannel = MethodChannel('lk.posex.posex_app/grouped_push');
 
 const _groupLabels = <String, String>{
   'sales': 'Sales',
@@ -41,13 +44,13 @@ const _groupLabels = <String, String>{
 };
 
 /// Background FCM handler (top-level).
-/// Backend sends data-only messages so we always own tray UI via InboxStyle.
+/// Android tray UI is owned by [PosexFirebaseMessagingService] (InboxStyle).
+/// This isolate only keeps Firebase wiring alive / dedupes if needed.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-    await PushRegistrationService.ensureLocalNotificationsReady();
-    await PushRegistrationService.displayFromRemoteMessage(message);
+    // Native service already posted the grouped notification.
   } catch (e) {
     debugPrint('[Push] background handler failed: $e');
   }
@@ -123,6 +126,17 @@ class PushRegistrationService {
   /// Clear stored lines + dismiss tray notification for a group (or all).
   static Future<void> clearGroup([String? groupKey]) async {
     try {
+      if (Platform.isAndroid) {
+        if (groupKey != null && groupKey.trim().isNotEmpty) {
+          await _nativePushChannel.invokeMethod<void>(
+            'clearGroup',
+            {'groupKey': groupKey.trim()},
+          );
+        } else {
+          await _nativePushChannel.invokeMethod<void>('clearAll');
+        }
+      }
+
       await ensureLocalNotificationsReady();
       final prefs = await SharedPreferences.getInstance();
       if (groupKey != null && groupKey.trim().isNotEmpty) {
@@ -142,13 +156,10 @@ class PushRegistrationService {
     }
   }
 
-  /// App opened / resumed: dismiss tray stacks and start grouping fresh.
+  /// Cold-start / resume: tap-to-clear is handled natively via PendingIntent.
   static Future<void> onAppOpened() async {
-    try {
-      await clearGroup();
-    } catch (e) {
-      debugPrint('[Push] onAppOpened failed: $e');
-    }
+    // No-op: opening the app from a grouped notification clears that group in
+    // MainActivity.handlePushIntent. Do not wipe other type stacks here.
   }
 
   static Future<bool> _ensureFirebase() async {
@@ -166,7 +177,9 @@ class PushRegistrationService {
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
       await ensureLocalNotificationsReady();
 
-      FirebaseMessaging.onMessage.listen(displayFromRemoteMessage);
+      // Foreground: native FCM service still receives data messages and updates
+      // the InboxStyle stack. Dart does not post a second local notification.
+      FirebaseMessaging.onMessage.listen((_) {});
       FirebaseMessaging.onMessageOpenedApp.listen((message) async {
         final ntype = (message.data['notification_type'] ?? '').toString().trim();
         await clearGroup(ntype.isEmpty ? 'general' : ntype);
@@ -348,11 +361,15 @@ class PushRegistrationService {
   }
 
   /// Show / update a grouped notification from an FCM message.
+  /// On Android, [PosexFirebaseMessagingService] owns tray UI — this is a fallback.
   static Future<void> displayFromRemoteMessage(RemoteMessage message) async {
+    if (Platform.isAndroid) {
+      // Native InboxStyle path already handled the message.
+      return;
+    }
     try {
       await ensureLocalNotificationsReady();
 
-      // Drop FCM retries / double-delivery of the same message id.
       final messageId = (message.messageId ?? '').trim();
       if (messageId.isNotEmpty && await _wasAlreadySeen(messageId)) {
         debugPrint('[Push] skip duplicate messageId=$messageId');
@@ -453,7 +470,10 @@ class PushRegistrationService {
     }
 
     existing.add(cleaned);
-    await prefs.setStringList(key, existing);
-    return existing;
+    final trimmed = existing.length > _maxGroupedItems
+        ? existing.sublist(existing.length - _maxGroupedItems)
+        : existing;
+    await prefs.setStringList(key, trimmed);
+    return trimmed;
   }
 }

@@ -15,7 +15,6 @@ const _fcmEndpointPrefix = 'fcm-native:';
 const _channelId = 'posex_push';
 const _prefsPrefix = 'posex_push_group_v1_';
 const _seenIdsKey = 'posex_push_seen_ids_v1';
-const _maxGroupedItems = 8;
 const _maxSeenIds = 80;
 
 const _groupLabels = <String, String>{
@@ -390,17 +389,14 @@ class PushRegistrationService {
     required String notificationType,
   }) async {
     final groupKey = notificationType.isNotEmpty ? notificationType : 'general';
-    final label = _groupLabels[groupKey] ?? title;
-    final lines = await _appendGroupLine(groupKey, body);
-    if (lines.isEmpty) return;
+    final cleaned = body.trim();
+    if (cleaned.isEmpty) return;
 
-    final count = lines.length;
-    // Newest first so the latest sale is always on top when expanded.
-    final newestFirst = lines.reversed.toList();
-    final latest = newestFirst.first;
-    final showTitle = count > 1 ? '$label ($count)' : title;
-    final summary = count > 1 ? 'Latest: $latest' : latest;
+    // Replace any previous notification for this type — only the latest stays.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('$_prefsPrefix$groupKey', [cleaned]);
     final notificationId = _notificationIdForGroup(groupKey);
+    await _localNotifications.cancel(notificationId);
 
     final details = AndroidNotificationDetails(
       _channelId,
@@ -409,11 +405,10 @@ class PushRegistrationService {
       importance: Importance.high,
       priority: Priority.high,
       icon: '@drawable/ic_stat_print',
-      // Single InboxStyle notification per type (no summary+children duplicates).
-      styleInformation: InboxStyleInformation(
-        newestFirst,
-        contentTitle: showTitle,
-        summaryText: summary,
+      styleInformation: BigTextStyleInformation(
+        cleaned,
+        contentTitle: title,
+        summaryText: _groupLabels[groupKey],
       ),
       autoCancel: true,
       onlyAlertOnce: false,
@@ -421,30 +416,10 @@ class PushRegistrationService {
 
     await _localNotifications.show(
       notificationId,
-      showTitle,
-      latest, // collapsed tray line = newest
+      title,
+      cleaned,
       NotificationDetails(android: details),
       payload: groupKey,
     );
-  }
-
-  static Future<List<String>> _appendGroupLine(String groupKey, String line) async {
-    final prefs = await SharedPreferences.getInstance();
-    final key = '$_prefsPrefix$groupKey';
-    final existing = prefs.getStringList(key) ?? <String>[];
-    final cleaned = line.trim();
-    if (cleaned.isEmpty) return existing;
-
-    // Skip exact duplicate of the last line (rapid retries / double FCM).
-    if (existing.isNotEmpty && existing.last == cleaned) {
-      return existing;
-    }
-
-    existing.add(cleaned);
-    final trimmed = existing.length > _maxGroupedItems
-        ? existing.sublist(existing.length - _maxGroupedItems)
-        : existing;
-    await prefs.setStringList(key, trimmed);
-    return trimmed;
   }
 }

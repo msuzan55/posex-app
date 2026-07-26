@@ -968,7 +968,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     );
   }
 
-  /// Bottom chrome outside the WebView HWND so Settings is always clickable.
+  /// Bottom chrome outside the WebView HWND (shown briefly, then hidden).
   Widget _buildWindowsSettingsBar() {
     return Material(
       color: const Color(0xFF111827),

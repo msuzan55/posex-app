@@ -11,6 +11,7 @@ import 'app_diagnostics.dart';
 class WindowsStartup {
   WindowsStartup._();
 
+  /// Kept for Android/inappwebview callers; Windows UI uses [webview_win_floating].
   static WebViewEnvironment? sharedWebViewEnvironment;
 
   static const _vcRedistUrl =
@@ -91,51 +92,73 @@ class WindowsStartup {
     await AppDiagnostics.log('INFO', 'Window manager ready (close guarded)');
   }
 
-  /// Creates WebView2 environment before the widget tree mounts so failures
-  /// show an error panel instead of a silent native crash.
-  static Future<String?> prepareWebViewEnvironment() async {
-    if (!Platform.isWindows) return null;
-
-    try {
-      sharedWebViewEnvironment = await _createWebViewEnvironment(
-        resetProfile: false,
-      );
-      await AppDiagnostics.log('INFO', 'WebView2 environment ready');
-      return null;
-    } catch (e, st) {
-      await AppDiagnostics.logError('WebView2 environment failed', e, st);
-    }
-
-    try {
-      sharedWebViewEnvironment = await _createWebViewEnvironment(
-        resetProfile: true,
-      );
-      await AppDiagnostics.log('INFO', 'WebView2 environment ready after profile reset');
-      return null;
-    } catch (e, st) {
-      await AppDiagnostics.logError(
-        'WebView2 environment failed after profile reset',
-        e,
-        st,
-      );
-      return 'WebView2 failed to start: $e\n\n'
-          'Try: close PosEx, delete the webview2 folder under '
-          '%APPDATA%\\posex_app\\, then open PosEx again.';
-    }
-  }
-
-  static Future<WebViewEnvironment> _createWebViewEnvironment({
-    required bool resetProfile,
+  /// Writable WebView2 profile directory under AppData.
+  ///
+  /// Required for Setup.exe installs under Program Files — WebView2 defaults to
+  /// creating `*.exe.WebView2` next to the executable, which is not writable there.
+  static Future<String> ensureWebView2UserDataFolder({
+    bool resetProfile = false,
   }) async {
     final dir = await getApplicationSupportDirectory();
     final userData = Directory('${dir.path}${Platform.pathSeparator}webview2');
     if (resetProfile && userData.existsSync()) {
       await userData.delete(recursive: true);
     }
+    if (!userData.existsSync()) {
+      await userData.create(recursive: true);
+    }
 
+    // Fail early with a clear error if AppData is not writable.
+    final probe = File(
+      '${userData.path}${Platform.pathSeparator}.posex_write_probe',
+    );
+    await probe.writeAsString('ok', flush: true);
+    await probe.delete();
+    return userData.path;
+  }
+
+  /// Ensures a writable WebView2 user-data folder exists before the UI mounts.
+  ///
+  /// Does **not** create a flutter_inappwebview [WebViewEnvironment] — Windows
+  /// UI uses webview_win_floating, which must own the profile path itself.
+  static Future<String?> prepareWebViewEnvironment() async {
+    if (!Platform.isWindows) return null;
+
+    try {
+      final path = await ensureWebView2UserDataFolder();
+      await AppDiagnostics.log('INFO', 'WebView2 user data folder ready: $path');
+      return null;
+    } catch (e, st) {
+      await AppDiagnostics.logError('WebView2 user data folder failed', e, st);
+    }
+
+    try {
+      final path = await ensureWebView2UserDataFolder(resetProfile: true);
+      await AppDiagnostics.log(
+        'INFO',
+        'WebView2 user data folder ready after reset: $path',
+      );
+      return null;
+    } catch (e, st) {
+      await AppDiagnostics.logError(
+        'WebView2 user data folder failed after reset',
+        e,
+        st,
+      );
+      return 'WebView2 failed to prepare its data folder: $e\n\n'
+          'Try: close PosEx, delete the webview2 folder under '
+          '%APPDATA%\\posex_app\\, then open PosEx again.';
+    }
+  }
+
+  /// Creates a flutter_inappwebview environment (used by non-Windows / legacy).
+  static Future<WebViewEnvironment> createInAppWebViewEnvironment({
+    required bool resetProfile,
+  }) async {
+    final path = await ensureWebView2UserDataFolder(resetProfile: resetProfile);
     return WebViewEnvironment.create(
       settings: WebViewEnvironmentSettings(
-        userDataFolder: userData.path,
+        userDataFolder: path,
       ),
     );
   }

@@ -6,7 +6,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 
 import '../platform/app_diagnostics.dart';
 import '../platform/native_file_bridge.dart';
@@ -81,8 +80,7 @@ class PosexWebViewController {
       );
     }
 
-    final dir = await getApplicationSupportDirectory();
-    final userData = '${dir.path}${Platform.pathSeparator}webview2';
+    final userData = await WindowsStartup.ensureWebView2UserDataFolder();
     _windowsEnv = await WebViewEnvironment.create(
       settings: WebViewEnvironmentSettings(userDataFolder: userData),
     );

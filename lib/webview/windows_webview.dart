@@ -1,8 +1,11 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:webview_win_floating/webview_win_floating.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
+import 'package:webview_win_floating/webview_win_floating.dart';
+
 import '../platform/app_diagnostics.dart';
+import '../platform/windows_startup.dart';
 
 class WindowsWebView extends StatefulWidget {
   const WindowsWebView({
@@ -25,7 +28,7 @@ class WindowsWebView extends StatefulWidget {
 }
 
 class WindowsWebViewState extends State<WindowsWebView> {
-  late final WinWebViewController _controller;
+  WinWebViewController? _controller;
   bool _initialized = false;
   bool _hasError = false;
   String? _errorMsg;
@@ -33,29 +36,40 @@ class WindowsWebViewState extends State<WindowsWebView> {
   @override
   void initState() {
     super.initState();
-    _controller = WinWebViewController();
     unawaited(_initWebView());
   }
 
   Future<void> _initWebView() async {
     try {
-      await _controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+      // Must be AppData — Program Files installs cannot write next to the exe.
+      final userDataFolder = await WindowsStartup.ensureWebView2UserDataFolder();
+      await AppDiagnostics.log(
+        'INFO',
+        'Windows WebView userDataFolder: $userDataFolder',
+      );
 
-      // Listen for messages from JavaScript
-      await _controller.addJavaScriptChannel(
+      final controller = WinWebViewController(
+        params: WindowsWebViewControllerCreationParams(
+          userDataFolder: userDataFolder,
+        ),
+      );
+      _controller = controller;
+      if (mounted) setState(() {});
+
+      await controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+
+      await controller.addJavaScriptChannel(
         'PosExNativeBridgeChannel',
         onMessageReceived: (JavaScriptMessage message) {
           widget.onBridgeMessage(message.message);
         },
       );
 
-      // Listen for page events
-      await _controller.setNavigationDelegate(
+      await controller.setNavigationDelegate(
         WinNavigationDelegate(
           onPageStarted: (url) async {
             widget.onLoadingChanged(true);
-            // Inject native bridge and CSS settings when loading starts
-            await _controller.runJavaScript('''
+            await controller.runJavaScript('''
 (function(){
   document.documentElement.classList.add('posex-native-app');
   document.documentElement.style.setProperty('--safe-top', '0px');
@@ -91,7 +105,7 @@ class WindowsWebViewState extends State<WindowsWebView> {
         ),
       );
 
-      await _controller.loadRequest(Uri.parse(widget.url));
+      await controller.loadRequest(Uri.parse(widget.url));
 
       if (mounted) {
         setState(() {
@@ -103,7 +117,10 @@ class WindowsWebViewState extends State<WindowsWebView> {
       if (mounted) {
         setState(() {
           _hasError = true;
-          _errorMsg = e.toString();
+          _errorMsg =
+              'WebView failed to start: $e\n\n'
+              'If PosEx is installed under Program Files, update to the latest build.\n'
+              'Or delete %APPDATA%\\posex_app\\webview2 and try again.';
         });
       }
       widget.onLoadFailed(e.toString());
@@ -111,27 +128,30 @@ class WindowsWebViewState extends State<WindowsWebView> {
   }
 
   Future<void> runJavaScript(String js) async {
-    if (!_initialized) return;
+    final controller = _controller;
+    if (!_initialized || controller == null) return;
     try {
-      await _controller.runJavaScript(js);
+      await controller.runJavaScript(js);
     } catch (e, st) {
       await AppDiagnostics.logError('Windows WebView JS execution failed', e, st);
     }
   }
 
   Future<bool> canGoBack() async {
-    if (!_initialized) return false;
+    final controller = _controller;
+    if (!_initialized || controller == null) return false;
     try {
-      return await _controller.canGoBack();
+      return await controller.canGoBack();
     } catch (_) {
       return false;
     }
   }
 
   Future<void> goBack() async {
-    if (!_initialized) return;
+    final controller = _controller;
+    if (!_initialized || controller == null) return;
     try {
-      await _controller.goBack();
+      await controller.goBack();
     } catch (_) {}
   }
 
@@ -150,12 +170,27 @@ class WindowsWebViewState extends State<WindowsWebView> {
       );
     }
 
-    if (!_initialized) {
+    final controller = _controller;
+    if (controller == null) {
       return const Center(
         child: CircularProgressIndicator(color: Color(0xFFF97316)),
       );
     }
 
-    return WinWebViewWidget(controller: _controller);
+    // Mount the platform view immediately so HWND/bounds attach (plugin example).
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        WinWebViewWidget(controller: controller),
+        if (!_initialized)
+          const ColoredBox(
+            color: Color(0xFF0B1220),
+            child: Center(
+              child: CircularProgressIndicator(color: Color(0xFFF97316)),
+            ),
+          ),
+      ],
+    );
   }
+
 }

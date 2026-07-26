@@ -56,7 +56,10 @@ Future<void> main() async {
           await WindowsStartup.setupWindow();
           await AppDiagnostics.attachWindowListener();
 
-          await AppDiagnostics.log('INFO', 'Preparing WebView2 environment');
+          await AppDiagnostics.log(
+            'INFO',
+            'Preparing writable WebView2 user-data folder',
+          );
           fatalStartupError ??= await WindowsStartup.prepareWebViewEnvironment();
         }
 

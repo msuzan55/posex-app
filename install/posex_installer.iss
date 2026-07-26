@@ -14,7 +14,9 @@ AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName=PosEx
 AppVersion={#AppVersion}
 AppPublisher=PosEx
-DefaultDirName={autopf}\PosEx
+; Per-user Programs folder is writable (WebView2 profile + future updates).
+; Program Files blocks WebView2's default user-data folder next to the exe.
+DefaultDirName={localappdata}\Programs\PosEx
 DefaultGroupName=PosEx
 OutputBaseFilename=PosEx-Setup
 OutputDir=..\build\installer

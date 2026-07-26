@@ -197,6 +197,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     unawaited(AppDiagnostics.instance.logLifecycle(state.name));
     if (state == AppLifecycleState.resumed) {
       unawaited(_nudgeWebAppSync());
+      // Clear tray group if this resume came from tapping a notification.
+      unawaited(PushRegistrationService.onAppOpened());
     }
     if (state == AppLifecycleState.detached) {
       unawaited(AppDiagnostics.instance.markCleanExit());
@@ -312,7 +314,10 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         }
       }
 
-      unawaited(PushRegistrationService.init());
+      unawaited(() async {
+        await PushRegistrationService.init();
+        await PushRegistrationService.onAppOpened();
+      }());
 
       final printStarted = await server.start();
       if (!printStarted) {

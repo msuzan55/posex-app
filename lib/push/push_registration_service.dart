@@ -14,7 +14,9 @@ const _apiBase = 'https://posex.lk';
 const _fcmEndpointPrefix = 'fcm-native:';
 const _channelId = 'posex_push';
 const _prefsPrefix = 'posex_push_group_v1_';
+const _seenIdsKey = 'posex_push_seen_ids_v1';
 const _maxGroupedItems = 8;
+const _maxSeenIds = 80;
 
 const _groupLabels = <String, String>{
   'sales': 'Sales',
@@ -75,12 +77,16 @@ class PushRegistrationService {
 
   static bool get isRegisteredWithServer => _registeredWithServer;
 
+  static int _notificationIdForGroup(String groupKey) =>
+      groupKey.hashCode & 0x7fffffff;
+
   static Future<void> ensureLocalNotificationsReady() async {
     if (_localReady) return;
     const androidInit = AndroidInitializationSettings('@drawable/ic_stat_print');
     await _localNotifications.initialize(
       const InitializationSettings(android: androidInit),
-      onDidReceiveNotificationResponse: (_) {},
+      onDidReceiveNotificationResponse: _onNotificationTapped,
+      onDidReceiveBackgroundNotificationResponse: _onNotificationTappedBackground,
     );
     final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
@@ -93,6 +99,59 @@ class PushRegistrationService {
       ),
     );
     _localReady = true;
+  }
+
+  @pragma('vm:entry-point')
+  static void _onNotificationTappedBackground(NotificationResponse response) {
+    // ignore: discarded_futures
+    clearGroup(response.payload);
+  }
+
+  static void _onNotificationTapped(NotificationResponse response) {
+    // ignore: discarded_futures
+    clearGroup(response.payload);
+  }
+
+  /// Clear stored lines + dismiss tray notification for a group (or all).
+  static Future<void> clearGroup([String? groupKey]) async {
+    try {
+      await ensureLocalNotificationsReady();
+      final prefs = await SharedPreferences.getInstance();
+      if (groupKey != null && groupKey.trim().isNotEmpty) {
+        final key = groupKey.trim();
+        await prefs.remove('$_prefsPrefix$key');
+        await _localNotifications.cancel(_notificationIdForGroup(key));
+        return;
+      }
+      final keys = prefs.getKeys().where((k) => k.startsWith(_prefsPrefix)).toList();
+      for (final k in keys) {
+        final gk = k.substring(_prefsPrefix.length);
+        await prefs.remove(k);
+        await _localNotifications.cancel(_notificationIdForGroup(gk));
+      }
+    } catch (e) {
+      debugPrint('[Push] clearGroup failed: $e');
+    }
+  }
+
+  /// Call when app is opened / resumed so tray + stash stay in sync.
+  static Future<void> onAppOpened() async {
+    try {
+      await ensureLocalNotificationsReady();
+      final launch = await _localNotifications.getNotificationAppLaunchDetails();
+      final response = launch?.notificationResponse;
+      if (launch?.didNotificationLaunchApp == true && response?.payload != null) {
+        await clearGroup(response!.payload);
+      }
+      // Also handle FCM tap that opened the app.
+      final initial = await FirebaseMessaging.instance.getInitialMessage();
+      if (initial != null) {
+        final ntype = (initial.data['notification_type'] ?? '').toString().trim();
+        await clearGroup(ntype.isEmpty ? 'general' : ntype);
+      }
+    } catch (e) {
+      debugPrint('[Push] onAppOpened failed: $e');
+    }
   }
 
   static Future<bool> _ensureFirebase() async {
@@ -111,7 +170,10 @@ class PushRegistrationService {
       await ensureLocalNotificationsReady();
 
       FirebaseMessaging.onMessage.listen(displayFromRemoteMessage);
-      FirebaseMessaging.onMessageOpenedApp.listen((_) {});
+      FirebaseMessaging.onMessageOpenedApp.listen((message) async {
+        final ntype = (message.data['notification_type'] ?? '').toString().trim();
+        await clearGroup(ntype.isEmpty ? 'general' : ntype);
+      });
       FirebaseMessaging.instance.onTokenRefresh.listen(_registerToken);
 
       _firebaseReady = true;
@@ -130,6 +192,7 @@ class PushRegistrationService {
       badge: true,
       sound: true,
     );
+    await onAppOpened();
     final token = await FirebaseMessaging.instance.getToken();
     if (token != null) await _registerToken(token);
   }
@@ -278,6 +341,17 @@ class PushRegistrationService {
   static Future<void> displayFromRemoteMessage(RemoteMessage message) async {
     try {
       await ensureLocalNotificationsReady();
+
+      // Drop FCM retries / double-delivery of the same message id.
+      final messageId = (message.messageId ?? '').trim();
+      if (messageId.isNotEmpty && await _wasAlreadySeen(messageId)) {
+        debugPrint('[Push] skip duplicate messageId=$messageId');
+        return;
+      }
+      if (messageId.isNotEmpty) {
+        await _markSeen(messageId);
+      }
+
       final data = message.data;
       final n = message.notification;
       final title = (data['title'] ?? n?.title ?? 'PosEx').toString().trim();
@@ -293,6 +367,23 @@ class PushRegistrationService {
     }
   }
 
+  static Future<bool> _wasAlreadySeen(String messageId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final seen = prefs.getStringList(_seenIdsKey) ?? <String>[];
+    return seen.contains(messageId);
+  }
+
+  static Future<void> _markSeen(String messageId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final seen = prefs.getStringList(_seenIdsKey) ?? <String>[];
+    seen.remove(messageId);
+    seen.add(messageId);
+    final trimmed = seen.length > _maxSeenIds
+        ? seen.sublist(seen.length - _maxSeenIds)
+        : seen;
+    await prefs.setStringList(_seenIdsKey, trimmed);
+  }
+
   static Future<void> _showGroupedNotification({
     required String title,
     required String body,
@@ -301,10 +392,15 @@ class PushRegistrationService {
     final groupKey = notificationType.isNotEmpty ? notificationType : 'general';
     final label = _groupLabels[groupKey] ?? title;
     final lines = await _appendGroupLine(groupKey, body);
+    if (lines.isEmpty) return;
+
     final count = lines.length;
+    // Newest first so the latest sale is always on top when expanded.
+    final newestFirst = lines.reversed.toList();
+    final latest = newestFirst.first;
     final showTitle = count > 1 ? '$label ($count)' : title;
-    final summary = count > 1 ? '$count new $label' : body;
-    final notificationId = groupKey.hashCode & 0x7fffffff;
+    final summary = count > 1 ? 'Latest: $latest' : latest;
+    final notificationId = _notificationIdForGroup(groupKey);
 
     final details = AndroidNotificationDetails(
       _channelId,
@@ -313,20 +409,20 @@ class PushRegistrationService {
       importance: Importance.high,
       priority: Priority.high,
       icon: '@drawable/ic_stat_print',
-      groupKey: 'posex_$groupKey',
-      setAsGroupSummary: count > 1,
+      // Single InboxStyle notification per type (no summary+children duplicates).
       styleInformation: InboxStyleInformation(
-        lines,
+        newestFirst,
         contentTitle: showTitle,
         summaryText: summary,
       ),
       autoCancel: true,
+      onlyAlertOnce: false,
     );
 
     await _localNotifications.show(
       notificationId,
       showTitle,
-      count > 1 ? lines.last : body,
+      latest, // collapsed tray line = newest
       NotificationDetails(android: details),
       payload: groupKey,
     );
@@ -337,9 +433,14 @@ class PushRegistrationService {
     final key = '$_prefsPrefix$groupKey';
     final existing = prefs.getStringList(key) ?? <String>[];
     final cleaned = line.trim();
-    if (cleaned.isNotEmpty) {
-      existing.add(cleaned);
+    if (cleaned.isEmpty) return existing;
+
+    // Skip exact duplicate of the last line (rapid retries / double FCM).
+    if (existing.isNotEmpty && existing.last == cleaned) {
+      return existing;
     }
+
+    existing.add(cleaned);
     final trimmed = existing.length > _maxGroupedItems
         ? existing.sublist(existing.length - _maxGroupedItems)
         : existing;

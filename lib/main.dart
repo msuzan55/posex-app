@@ -154,6 +154,10 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   String? _updateError;
   bool _loggedUiReady = false;
   bool _bootstrapStarted = false;
+  bool _settingsFabVisible = true;
+  Timer? _settingsFabHideTimer;
+
+  static const _settingsFabVisibleFor = Duration(seconds: 10);
 
   @override
   void initState() {
@@ -163,6 +167,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       if (_loggedUiReady) return;
       _loggedUiReady = true;
       unawaited(AppDiagnostics.instance.onUiReady());
+      _revealSettingsFabTemporarily();
     });
     if (widget.initialStartupError != null &&
         widget.initialStartupError!.trim().isNotEmpty) {
@@ -171,6 +176,21 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     } else {
       unawaited(_startWithSavedEnvironment());
     }
+  }
+
+  /// Show the Android settings FAB briefly, then hide it.
+  void _revealSettingsFabTemporarily() {
+    if (Platform.isWindows) return;
+    _settingsFabHideTimer?.cancel();
+    if (mounted && !_settingsFabVisible) {
+      setState(() => _settingsFabVisible = true);
+    } else {
+      _settingsFabVisible = true;
+    }
+    _settingsFabHideTimer = Timer(_settingsFabVisibleFor, () {
+      if (!mounted) return;
+      setState(() => _settingsFabVisible = false);
+    });
   }
 
   Future<void> _startWithSavedEnvironment() async {
@@ -193,6 +213,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     _probeTimer?.cancel();
     _webLoadTimeout?.cancel();
     _heartbeatTimer?.cancel();
+    _settingsFabHideTimer?.cancel();
     final listener = _printerManagerListener;
     final manager = _printerManager;
     if (listener != null && manager != null) {
@@ -207,6 +228,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     unawaited(AppDiagnostics.instance.logLifecycle(state.name));
     if (state == AppLifecycleState.resumed) {
       unawaited(_nudgeWebAppSync());
+      // Opening the app clears stacked push groups so the next alerts start fresh.
+      unawaited(PushRegistrationService.onAppOpened());
+      _revealSettingsFabTemporarily();
     }
     if (state == AppLifecycleState.detached) {
       unawaited(AppDiagnostics.instance.markCleanExit());
@@ -910,8 +934,8 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
             ),
           ),
         // Android: floating settings (WebView is a Flutter texture).
-        // Windows: settings live in a chrome bar below the WebView HWND.
-        if (!showStartupError && !Platform.isWindows)
+        // Shown briefly on open/resume, then hidden. Windows uses bottom chrome.
+        if (!showStartupError && !Platform.isWindows && _settingsFabVisible)
           Positioned(
             right: 12,
             bottom: bottomInset + 12,

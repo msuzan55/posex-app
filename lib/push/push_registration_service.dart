@@ -16,7 +16,6 @@ const _fcmEndpointPrefix = 'fcm-native:';
 const _channelId = 'posex_push';
 const _prefsPrefix = 'posex_push_group_v1_';
 const _seenIdsKey = 'posex_push_seen_ids_v1';
-const _maxGroupedItems = 8;
 const _maxSeenIds = 80;
 
 const _groupLabels = <String, String>{
@@ -42,13 +41,9 @@ const _groupLabels = <String, String>{
 };
 
 /// Background FCM handler (top-level).
-/// When FCM includes a system `notification` block, Android already shows it —
-/// skip a second local banner. Data-only messages still get InboxStyle here.
+/// Backend sends data-only messages so we always own tray UI via InboxStyle.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  if (message.notification != null) {
-    return;
-  }
   try {
     await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     await PushRegistrationService.ensureLocalNotificationsReady();
@@ -85,7 +80,6 @@ class PushRegistrationService {
   static String? _authToken;
   static bool _registeredWithServer = false;
   static String? _lastError;
-  static bool _clearedLaunchNotification = false;
 
   static bool get isRegisteredWithServer => _registeredWithServer;
 
@@ -148,24 +142,10 @@ class PushRegistrationService {
     }
   }
 
-  /// Cold-start: clear the tapped group so the next pushes start a fresh stack.
+  /// App opened / resumed: dismiss tray stacks and start grouping fresh.
   static Future<void> onAppOpened() async {
-    if (_clearedLaunchNotification) return;
-    _clearedLaunchNotification = true;
     try {
-      await ensureLocalNotificationsReady();
-      final launch = await _localNotifications.getNotificationAppLaunchDetails();
-      final response = launch?.notificationResponse;
-      if (launch?.didNotificationLaunchApp == true && response?.payload != null) {
-        await clearGroup(response!.payload);
-        return;
-      }
-      final initial = await FirebaseMessaging.instance.getInitialMessage();
-      if (initial != null) {
-        final ntype =
-            (initial.data['notification_type'] ?? '').toString().trim();
-        await clearGroup(ntype.isEmpty ? 'general' : ntype);
-      }
+      await clearGroup();
     } catch (e) {
       debugPrint('[Push] onAppOpened failed: $e');
     }
@@ -473,10 +453,7 @@ class PushRegistrationService {
     }
 
     existing.add(cleaned);
-    final trimmed = existing.length > _maxGroupedItems
-        ? existing.sublist(existing.length - _maxGroupedItems)
-        : existing;
-    await prefs.setStringList(key, trimmed);
-    return trimmed;
+    await prefs.setStringList(key, existing);
+    return existing;
   }
 }

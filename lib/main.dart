@@ -691,8 +691,10 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       return;
     }
 
-    if (Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
+    if (!mounted) return;
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.pop();
     }
 
     await _webView?.clearSiteData();

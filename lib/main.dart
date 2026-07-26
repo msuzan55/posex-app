@@ -662,17 +662,28 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     } catch (_) {}
   }
 
-  void _openSettingsPanel() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PrintServerPanel(
-          manager: _printerManager,
-          server: _printServer,
-          currentEnvironment: _posexEnv,
-          onEnvironmentSelected: _switchEnvironment,
+  Future<void> _openSettingsPanel() async {
+    // Native WebView2 HWND sits above Flutter routes — hide it while Settings is open.
+    if (Platform.isWindows) {
+      await _windowsWebViewKey.currentState?.setVisible(false);
+    }
+    if (!mounted) return;
+    try {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PrintServerPanel(
+            manager: _printerManager,
+            server: _printServer,
+            currentEnvironment: _posexEnv,
+            onEnvironmentSelected: _switchEnvironment,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      if (Platform.isWindows) {
+        await _windowsWebViewKey.currentState?.setVisible(true);
+      }
+    }
   }
 
   Future<void> _switchEnvironment(String env) async {
@@ -898,14 +909,16 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
               ),
             ),
           ),
-        if (!showStartupError)
+        // Android: floating settings (WebView is a Flutter texture).
+        // Windows: settings live in a chrome bar below the WebView HWND.
+        if (!showStartupError && !Platform.isWindows)
           Positioned(
             right: 12,
             bottom: bottomInset + 12,
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: _openSettingsPanel,
+                onTap: () => unawaited(_openSettingsPanel()),
                 borderRadius: BorderRadius.circular(24),
                 child: Tooltip(
                   message: 'Settings',
@@ -929,6 +942,51 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
             ),
           ),
       ],
+    );
+  }
+
+  /// Bottom chrome outside the WebView HWND so Settings is always clickable.
+  Widget _buildWindowsSettingsBar() {
+    return Material(
+      color: const Color(0xFF111827),
+      elevation: 8,
+      child: SizedBox(
+        height: 52,
+        child: Row(
+          children: [
+            const SizedBox(width: 16),
+            const Icon(Icons.storefront_outlined, color: Color(0xFFF97316), size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                PosexEnvironment.labelFor(_posexEnv),
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => unawaited(_openSettingsPanel()),
+              icon: const Icon(Icons.settings, color: Colors.white, size: 20),
+              label: const Text(
+                'Settings',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+              style: TextButton.styleFrom(
+                backgroundColor: const Color(0xFFF97316),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+          ],
+        ),
+      ),
     );
   }
 
@@ -964,7 +1022,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                   ? Column(
                       children: [
                         if (_update != null) _buildUpdateBanner(),
-                        Expanded(child: _buildBodyStack(webView, bottomInset)),
+                        Expanded(child: _buildBodyStack(webView, 0)),
                       ],
                     )
                   : SafeArea(
@@ -976,6 +1034,9 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
                       ),
                     ),
             ),
+            if (Platform.isWindows &&
+                (_bootstrapError == null || _bootstrapError!.trim().isEmpty))
+              _buildWindowsSettingsBar(),
           ],
         ),
       ),

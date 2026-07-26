@@ -9,30 +9,44 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../firebase_options.dart';
+import '../platform/posex_environment.dart';
 
 const _apiBase = 'https://posex.lk';
 const _fcmEndpointPrefix = 'fcm-native:';
 const _channelId = 'posex_push';
+const _prefsPrefix = 'posex_push_group_v1_';
 const _seenIdsKey = 'posex_push_seen_ids_v1';
+const _maxGroupedItems = 8;
 const _maxSeenIds = 80;
 
-/// Background FCM handler (top-level).
-/// Used mainly for data-only / foreground-edge cases; normal pushes include a
-/// system `notification` block so Android shows them even when the app is killed.
+const _groupLabels = <String, String>{
+  'sales': 'Sales',
+  'edited_bills': 'Edited bills',
+  'exchange_tokens': 'Exchange tokens',
+  'refunds': 'Refunds',
+  'supplier_bills': 'Supplier bills',
+  'new_suppliers': 'New suppliers',
+  'expenses': 'Expenses',
+  'cash_register_closed': 'Cash register closed',
+  'cash_register_opened': 'Cash register opened',
+  'daily_totals': 'Daily totals',
+  'employee_clock': 'Employee clock',
+  'new_employees': 'New employees',
+  'employee_loans': 'Employee loans',
+  'employee_dayoffs': 'Employee day-offs',
+  'salary_paid': 'Salary paid',
+  'new_customers': 'New customers',
+  'credit_payments': 'Credit payments',
+  'held_bills': 'Held bills',
+  'general': 'PosEx',
+};
+
+/// Background FCM handler (top-level) — shows grouped local notifications.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  // If FCM already attached a notification payload, the OS shows it — avoid
-  // double banners from a second local notification.
-  if (message.notification != null) {
-    return;
-  }
-  try {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-    await PushRegistrationService.ensureLocalNotificationsReady();
-    await PushRegistrationService.displayFromRemoteMessage(message);
-  } catch (e) {
-    debugPrint('[Push] background handler failed: $e');
-  }
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await PushRegistrationService.ensureLocalNotificationsReady();
+  await PushRegistrationService.displayFromRemoteMessage(message);
 }
 
 class NativePushStatus {
@@ -107,18 +121,25 @@ class PushRegistrationService {
   static Future<void> clearGroup([String? groupKey]) async {
     try {
       await ensureLocalNotificationsReady();
+      final prefs = await SharedPreferences.getInstance();
       if (groupKey != null && groupKey.trim().isNotEmpty) {
         final key = groupKey.trim();
+        await prefs.remove('$_prefsPrefix$key');
         await _localNotifications.cancel(_notificationIdForGroup(key));
         return;
       }
-      await _localNotifications.cancelAll();
+      final keys = prefs.getKeys().where((k) => k.startsWith(_prefsPrefix)).toList();
+      for (final k in keys) {
+        final gk = k.substring(_prefsPrefix.length);
+        await prefs.remove(k);
+        await _localNotifications.cancel(_notificationIdForGroup(gk));
+      }
     } catch (e) {
       debugPrint('[Push] clearGroup failed: $e');
     }
   }
 
-  /// Cold-start only: clear the group that launched the app (once).
+  /// Cold-start: clear the tapped group so the next pushes start a fresh stack.
   static Future<void> onAppOpened() async {
     if (_clearedLaunchNotification) return;
     _clearedLaunchNotification = true;
@@ -128,10 +149,12 @@ class PushRegistrationService {
       final response = launch?.notificationResponse;
       if (launch?.didNotificationLaunchApp == true && response?.payload != null) {
         await clearGroup(response!.payload);
+        return;
       }
       final initial = await FirebaseMessaging.instance.getInitialMessage();
       if (initial != null) {
-        final ntype = (initial.data['notification_type'] ?? '').toString().trim();
+        final ntype =
+            (initial.data['notification_type'] ?? '').toString().trim();
         await clearGroup(ntype.isEmpty ? 'general' : ntype);
       }
     } catch (e) {
@@ -154,7 +177,6 @@ class PushRegistrationService {
       FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
       await ensureLocalNotificationsReady();
 
-      // Foreground: OS will not show FCM notification — show a local one.
       FirebaseMessaging.onMessage.listen(displayFromRemoteMessage);
       FirebaseMessaging.onMessageOpenedApp.listen((message) async {
         final ntype = (message.data['notification_type'] ?? '').toString().trim();
@@ -203,6 +225,9 @@ class PushRegistrationService {
     }
 
     final endpoint = '$_fcmEndpointPrefix$token';
+    final env = await PosexEnvironment.load();
+    final pwaBasePath =
+        env == PosexEnvironment.app ? '/app/' : '/test/';
     try {
       final res = await http.post(
         Uri.parse('$_apiBase/api/v1/notifications/subscribe-fcm'),
@@ -213,7 +238,7 @@ class PushRegistrationService {
         },
         body: jsonEncode({
           'token': token,
-          'pwaBasePath': '/test/',
+          'pwaBasePath': pwaBasePath,
           'endpointHint': endpoint,
         }),
       );
@@ -333,11 +358,12 @@ class PushRegistrationService {
     );
   }
 
-  /// Show a local notification (foreground / data-only fallback).
+  /// Show / update a grouped notification from an FCM message.
   static Future<void> displayFromRemoteMessage(RemoteMessage message) async {
     try {
       await ensureLocalNotificationsReady();
 
+      // Drop FCM retries / double-delivery of the same message id.
       final messageId = (message.messageId ?? '').trim();
       if (messageId.isNotEmpty && await _wasAlreadySeen(messageId)) {
         debugPrint('[Push] skip duplicate messageId=$messageId');
@@ -352,7 +378,7 @@ class PushRegistrationService {
       final title = (data['title'] ?? n?.title ?? 'PosEx').toString().trim();
       final body = (data['body'] ?? n?.body ?? 'New notification').toString().trim();
       final ntype = (data['notification_type'] ?? '').toString().trim();
-      await _showLocalNotification(
+      await _showGroupedNotification(
         title: title.isEmpty ? 'PosEx' : title,
         body: body.isEmpty ? 'New notification' : body,
         notificationType: ntype,
@@ -379,16 +405,24 @@ class PushRegistrationService {
     await prefs.setStringList(_seenIdsKey, trimmed);
   }
 
-  static Future<void> _showLocalNotification({
+  static Future<void> _showGroupedNotification({
     required String title,
     required String body,
     required String notificationType,
   }) async {
     final groupKey = notificationType.isNotEmpty ? notificationType : 'general';
-    final cleaned = body.trim();
-    if (cleaned.isEmpty) return;
+    final label = _groupLabels[groupKey] ?? title;
+    final lines = await _appendGroupLine(groupKey, body);
+    if (lines.isEmpty) return;
 
+    final count = lines.length;
+    // Newest first so the latest sale is always on top when expanded.
+    final newestFirst = lines.reversed.toList();
+    final latest = newestFirst.first;
+    final showTitle = count > 1 ? '$label ($count)' : title;
+    final summary = count > 1 ? 'Latest: $latest' : latest;
     final notificationId = _notificationIdForGroup(groupKey);
+
     final details = AndroidNotificationDetails(
       _channelId,
       'PosEx notifications',
@@ -396,10 +430,13 @@ class PushRegistrationService {
       importance: Importance.high,
       priority: Priority.high,
       icon: '@drawable/ic_stat_print',
-      tag: 'posex-$groupKey',
-      styleInformation: BigTextStyleInformation(
-        cleaned,
-        contentTitle: title,
+      category: AndroidNotificationCategory.status,
+      groupKey: 'posex_$groupKey',
+      // One InboxStyle tray item per type; lines stack with newest on top.
+      styleInformation: InboxStyleInformation(
+        newestFirst,
+        contentTitle: showTitle,
+        summaryText: summary,
       ),
       autoCancel: true,
       onlyAlertOnce: false,
@@ -407,10 +444,30 @@ class PushRegistrationService {
 
     await _localNotifications.show(
       notificationId,
-      title,
-      cleaned,
+      showTitle,
+      latest, // collapsed tray line = newest
       NotificationDetails(android: details),
       payload: groupKey,
     );
+  }
+
+  static Future<List<String>> _appendGroupLine(String groupKey, String line) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$_prefsPrefix$groupKey';
+    final existing = prefs.getStringList(key) ?? <String>[];
+    final cleaned = line.trim();
+    if (cleaned.isEmpty) return existing;
+
+    // Skip exact duplicate of the last line (rapid retries / double FCM).
+    if (existing.isNotEmpty && existing.last == cleaned) {
+      return existing;
+    }
+
+    existing.add(cleaned);
+    final trimmed = existing.length > _maxGroupedItems
+        ? existing.sublist(existing.length - _maxGroupedItems)
+        : existing;
+    await prefs.setStringList(key, trimmed);
+    return trimmed;
   }
 }

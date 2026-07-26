@@ -155,6 +155,17 @@ class WindowsWebViewState extends State<WindowsWebView> {
     } catch (_) {}
   }
 
+  /// Hide/show the native WebView2 HWND so Flutter routes (Settings) can receive clicks.
+  Future<void> setVisible(bool visible) async {
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      await controller.setVisibility(visible);
+    } catch (e, st) {
+      await AppDiagnostics.logError('Windows WebView setVisibility failed', e, st);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_hasError) {

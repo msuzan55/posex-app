@@ -11,7 +11,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
   print_bluetooth_thermal
   screen_retriever_windows
   webview_win_floating
-  webview_windows
   window_manager
 )
 

@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'platform/app_diagnostics.dart';
 import 'platform/app_permissions.dart';
+import 'platform/posex_environment.dart';
 import 'platform/windows_shell_service.dart';
 import 'platform/windows_single_instance.dart';
 import 'platform/windows_startup.dart';
@@ -26,7 +27,6 @@ import 'widgets/startup_error_panel.dart';
 
 /// PosEx standalone app — WebView wrapper around the PosEx web app, with an
 /// embedded localhost print server (USB/Bluetooth/Network) on :9753.
-const String kPosexUrl = 'https://posex.lk/test/';
 
 Future<void> main() async {
   runZonedGuarded(() async {
@@ -139,11 +139,11 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
   final UpdateService _updateService = UpdateService();
 
   bool _loading = true;
-  bool _showPrintFab = true;
+  String _posexEnv = PosexEnvironment.test;
+  String _posexUrl = PosexEnvironment.testUrl;
   String? _bootstrapError;
   bool _showPreviousSessionNote = true;
   Key _webViewHostKey = UniqueKey();
-  Timer? _fabTimer;
   Timer? _probeTimer;
   Timer? _webLoadTimeout;
   Timer? _heartbeatTimer;
@@ -168,21 +168,28 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         widget.initialStartupError!.trim().isNotEmpty) {
       _bootstrapError = widget.initialStartupError;
       _loading = false;
-    } else if (Platform.isWindows) {
-      unawaited(_startWindowsSession());
+    } else {
+      unawaited(_startWithSavedEnvironment());
+    }
+  }
+
+  Future<void> _startWithSavedEnvironment() async {
+    final env = await PosexEnvironment.load();
+    if (!mounted) return;
+    setState(() {
+      _posexEnv = env;
+      _posexUrl = PosexEnvironment.urlFor(env);
+    });
+    if (Platform.isWindows) {
+      await _startWindowsSession();
     } else {
       _initWebView();
     }
-
-    _fabTimer = Timer(const Duration(seconds: 5), () {
-      if (mounted) setState(() => _showPrintFab = false);
-    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _fabTimer?.cancel();
     _probeTimer?.cancel();
     _webLoadTimeout?.cancel();
     _heartbeatTimer?.cancel();
@@ -561,7 +568,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     });
     unawaited(() async {
       try {
-        await webView.initialize(kPosexUrl);
+        await webView.initialize(_posexUrl);
       } catch (e, st) {
         if (_bootstrapError == null) {
           _setBootstrapError('WebView failed to start: $e', stack: st);
@@ -657,18 +664,50 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
     } catch (_) {}
   }
 
-  void _openPrintPanel() {
-    final manager = _printerManager;
-    final server = _printServer;
-    if (manager == null || server == null) return;
+  void _openSettingsPanel() {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PrintServerPanel(
-          manager: manager,
-          server: server,
+          manager: _printerManager,
+          server: _printServer,
+          currentEnvironment: _posexEnv,
+          onEnvironmentSelected: _switchEnvironment,
         ),
       ),
     );
+  }
+
+  Future<void> _switchEnvironment(String env) async {
+    if (env == _posexEnv) return;
+    await PosexEnvironment.save(env);
+    await AppDiagnostics.log(
+      'INFO',
+      'Switching PosEx site to ${PosexEnvironment.labelFor(env)}',
+    );
+
+    if (Platform.isWindows) {
+      // WebView2 profile must be wiped before reload; restart is the safe path.
+      await WindowsShellService.clearWebViewDataAndRestart();
+      return;
+    }
+
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+
+    await _webView?.clearSiteData();
+    await _webView?.dispose();
+    _webView = null;
+    _bootstrapStarted = false;
+    if (!mounted) return;
+    setState(() {
+      _posexEnv = env;
+      _posexUrl = PosexEnvironment.urlFor(env);
+      _webViewHostKey = UniqueKey();
+      _loading = true;
+      _bootstrapError = null;
+    });
+    _initWebView();
   }
 
   Widget _buildUpdateBanner() {
@@ -770,7 +809,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
         if (isWindowsBootstrapDone)
           WindowsWebView(
             key: _windowsWebViewKey,
-            url: kPosexUrl,
+            url: _posexUrl,
             onBridgeMessage: _onBridgeMessage,
             onPageFinished: () {
               _webLoadTimeout?.cancel();
@@ -859,29 +898,32 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
               ),
             ),
           ),
-        if (_showPrintFab)
+        if (!showStartupError)
           Positioned(
             right: 12,
             bottom: bottomInset + 12,
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                onTap: _openPrintPanel,
+                onTap: _openSettingsPanel,
                 borderRadius: BorderRadius.circular(24),
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF97316),
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.4),
-                        blurRadius: 8,
-                      ),
-                    ],
+                child: Tooltip(
+                  message: 'Settings',
+                  child: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF97316),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.4),
+                          blurRadius: 8,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.settings, color: Colors.white),
                   ),
-                  child: const Icon(Icons.print, color: Colors.white),
                 ),
               ),
             ),

@@ -315,6 +315,16 @@ class PosexWebViewController {
     await _controller?.goBack();
   }
 
+  /// Clears cookies/cache so a site switch starts with a clean web profile.
+  Future<void> clearSiteData() async {
+    try {
+      await CookieManager.instance().deleteAllCookies();
+    } catch (_) {}
+    try {
+      await InAppWebViewController.clearAllCache();
+    } catch (_) {}
+  }
+
   Future<void> dispose() async {
     _controller = null;
     if (_widgetBuilt) {

@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../platform/posex_environment.dart';
 import '../platform/windows_single_instance.dart';
 import '../update/windows_install_paths.dart';
 
@@ -95,6 +96,7 @@ class WindowsShellService {
     final prefs = await SharedPreferences.getInstance();
     final keepStartup = prefs.getBool(_startOnStartupKey);
     final startupConfigured = prefs.getBool(_startupConfiguredKey);
+    final keepEnvironment = prefs.getString(PosexEnvironment.prefsKey);
     await prefs.clear();
     if (keepStartup != null) {
       await prefs.setBool(_startOnStartupKey, keepStartup);
@@ -102,13 +104,36 @@ class WindowsShellService {
     if (startupConfigured != null) {
       await prefs.setBool(_startupConfiguredKey, startupConfigured);
     }
+    if (keepEnvironment == PosexEnvironment.app ||
+        keepEnvironment == PosexEnvironment.test) {
+      await prefs.setString(PosexEnvironment.prefsKey, keepEnvironment!);
+    }
 
+    await _deleteWebViewProfile();
+    await _deleteUpdateTempFiles();
+    await restartApp();
+  }
+
+  /// Clears WebView2 profile (login / offline web data) and restarts.
+  /// Keeps printer settings and the selected PosEx site preference.
+  static Future<void> clearWebViewDataAndRestart() async {
+    if (!isSupported) {
+      throw StateError('Clear WebView data is supported on Windows only');
+    }
+    await _deleteWebViewProfile();
+    await restartApp();
+  }
+
+  static Future<void> _deleteWebViewProfile() async {
     final support = await getApplicationSupportDirectory();
-    final webViewDir = Directory('${support.path}${Platform.pathSeparator}webview2');
+    final webViewDir =
+        Directory('${support.path}${Platform.pathSeparator}webview2');
     if (webViewDir.existsSync()) {
       await webViewDir.delete(recursive: true);
     }
+  }
 
+  static Future<void> _deleteUpdateTempFiles() async {
     final temp = await getTemporaryDirectory();
     await for (final entity in temp.list()) {
       final name = entity.path.split(Platform.pathSeparator).last.toLowerCase();
@@ -121,11 +146,13 @@ class WindowsShellService {
         } catch (_) {}
       }
     }
+  }
 
+  static Future<void> restartApp() async {
+    if (!isSupported) return;
     final exe = WindowsInstallPaths.preferredLaunchPath(
       Directory(File(Platform.resolvedExecutable).parent.path),
     );
-    // Release the lock so the restarted instance can acquire it immediately.
     await WindowsSingleInstance.release();
     await Process.start(
       'cmd.exe',

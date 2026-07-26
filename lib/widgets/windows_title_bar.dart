@@ -61,7 +61,7 @@ class _WindowsTitleBarState extends State<WindowsTitleBar> {
               _infoLine('Log file', AppDiagnostics.instance.logFilePath!),
             const SizedBox(height: 8),
             const Text(
-              'PosEx loads https://posex.lk/test/ with a local print server on port 9753.',
+              'PosEx loads posex.lk/test or posex.lk/app (choose in Settings) with a local print server on port 9753.',
               style: TextStyle(color: Colors.white54, fontSize: 12),
             ),
           ],

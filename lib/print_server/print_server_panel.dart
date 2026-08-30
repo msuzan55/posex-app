@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
+import '../platform/app_permissions.dart';
 import '../platform/platform_features.dart';
 import '../platform/posex_environment.dart';
 import 'print_http_server.dart';
@@ -36,6 +37,12 @@ class PrintServerPanel extends StatefulWidget {
 
 class _PrintServerPanelState extends State<PrintServerPanel> {
   PrinterManager? get _m => widget.manager;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(requestPrintPermissions());
+  }
 
   String _newId() => DateTime.now().microsecondsSinceEpoch.toString();
 

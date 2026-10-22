@@ -4,13 +4,15 @@ import 'dart:io';
 import 'package:flutter_thermal_printer/flutter_thermal_printer.dart';
 import 'package:flutter_thermal_printer/utils/printer.dart';
 
+import 'android_raw_printer.dart';
 import 'windows_raw_printer.dart';
 
 /// USB printer access.
 ///
-/// Android uses [FlutterThermalPrinter]. Windows uses [WindowsRawPrinter]
-/// (bulk WritePrinter off the UI isolate) and never touches
-/// [FlutterThermalPrinter.instance] (its getter pulls in flutter_blue_plus).
+/// Android: scan via [FlutterThermalPrinter], print via [AndroidRawPrinter]
+/// (chunked bulk OUT + printer-class interface). Windows: [WindowsRawPrinter]
+/// and never touches [FlutterThermalPrinter.instance] (its getter pulls in
+/// flutter_blue_plus).
 class UsbPrinterService {
   FlutterThermalPrinter? _androidFtp;
 
@@ -118,10 +120,14 @@ class UsbPrinterService {
     final printer = _match(devices, vendorId, productId);
     if (printer == null) return false;
 
+    // Ensure USB permission (plugin prompt) before our native RAW write.
     try {
       await _ftp.connect(printer);
     } catch (_) {}
-    await _ftp.printData(printer, bytes, longData: true);
+
+    final vid = (printer.vendorId ?? vendorId).toString();
+    final pid = (printer.productId ?? productId).toString();
+    await AndroidRawPrinter.printBytes(vid, pid, bytes);
     return true;
   }
 }

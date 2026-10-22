@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
+import 'print_payload_codec.dart';
 import 'printer_manager.dart';
 
 /// Embedded HTTP print server on :9753, mirroring the contract the PosEx web
@@ -129,10 +130,10 @@ class PrintHttpServer {
     }
   }
 
-  /// The web app sends ESC/POS / ZPL as a raw string where each char code is a
-  /// byte (0-255). Map code units to bytes.
-  List<int> _stringToBytes(String s) =>
-      s.codeUnits.map((c) => c & 0xFF).toList(growable: false);
+  /// The web app sends ESC/POS / ZPL via `thermalToLatin1String` (one JS char
+  /// per byte 0–255). Prefer Latin-1; fall back to masked code units if any
+  /// char is outside 0–255 (should not happen for a healthy payload).
+  List<int> _stringToBytes(String s) => binaryStringToBytes(s);
 
   Response _json(Map<String, dynamic> data, {int status = 200}) => Response(
         status,

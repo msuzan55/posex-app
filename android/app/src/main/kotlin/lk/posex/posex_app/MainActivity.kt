@@ -26,6 +26,7 @@ import java.io.FileOutputStream
 class MainActivity : FlutterActivity() {
     companion object {
         private const val PRINT_CHANNEL = "lk.posex.posex_app/print_service"
+        private const val USB_RAW_CHANNEL = "lk.posex.posex_app/usb_raw"
         private const val INSTALL_CHANNEL = "lk.posex.posex_app/apk_install"
         private const val FILE_CHANNEL = "lk.posex.posex_app/file_actions"
         private const val PUSH_CHANNEL = "lk.posex.posex_app/grouped_push"
@@ -135,6 +136,47 @@ class MainActivity : FlutterActivity() {
                     "stopForeground" -> {
                         stopService(Intent(this, PrintForegroundService::class.java))
                         result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // RAW USB bulk print — runs off the UI thread (bulkTransfer is blocking).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, USB_RAW_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "printBytes" -> {
+                        val vendorId = call.argument<String>("vendorId") ?: ""
+                        val productId = call.argument<String>("productId") ?: ""
+                        val data = decodeUsbPayload(call.argument("data"))
+                        if (vendorId.isBlank() || data == null || data.isEmpty()) {
+                            result.error(
+                                "INVALID_ARGS",
+                                "vendorId and non-empty data are required",
+                                null,
+                            )
+                            return@setMethodCallHandler
+                        }
+                        val appContext = applicationContext
+                        Thread {
+                            try {
+                                AndroidRawUsbPrinter.printBytes(
+                                    appContext,
+                                    vendorId,
+                                    productId,
+                                    data,
+                                )
+                                runOnUiThread { result.success(true) }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error(
+                                        "USB_PRINT_FAILED",
+                                        e.message ?: e.toString(),
+                                        null,
+                                    )
+                                }
+                            }
+                        }.start()
                     }
                     else -> result.notImplemented()
                 }
@@ -687,6 +729,22 @@ class MainActivity : FlutterActivity() {
             startForegroundService(intent)
         } else {
             startService(intent)
+        }
+    }
+
+    /** Accept Uint8List (ByteArray) or List of ints from the Flutter method channel. */
+    private fun decodeUsbPayload(raw: Any?): ByteArray? {
+        return when (raw) {
+            is ByteArray -> raw
+            is List<*> -> {
+                val out = ByteArray(raw.size)
+                for (i in raw.indices) {
+                    val n = raw[i] as? Number ?: return null
+                    out[i] = n.toByte()
+                }
+                out
+            }
+            else -> null
         }
     }
 }

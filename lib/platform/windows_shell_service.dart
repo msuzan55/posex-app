@@ -47,7 +47,13 @@ class WindowsShellService {
     if (!isSupported) return;
     await configureLaunchAtStartup();
     final prefs = await SharedPreferences.getInstance();
-    if (prefs.getBool(_startupConfiguredKey) == true) return;
+    if (prefs.getBool(_startupConfiguredKey) == true) {
+      if (prefs.getBool(_startOnStartupKey) == true &&
+          !await launchAtStartup.isEnabled()) {
+        await launchAtStartup.enable();
+      }
+      return;
+    }
     await setStartOnStartup(true);
     await prefs.setBool(_startupConfiguredKey, true);
   }
@@ -126,8 +132,9 @@ class WindowsShellService {
 
   static Future<void> _deleteWebViewProfile() async {
     final support = await getApplicationSupportDirectory();
-    final webViewDir =
-        Directory('${support.path}${Platform.pathSeparator}webview2');
+    final webViewDir = Directory(
+      '${support.path}${Platform.pathSeparator}webview2',
+    );
     if (webViewDir.existsSync()) {
       await webViewDir.delete(recursive: true);
     }

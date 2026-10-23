@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
-import '../platform/app_permissions.dart';
 import '../platform/platform_features.dart';
 import '../platform/posex_environment.dart';
 import 'print_http_server.dart';
@@ -36,13 +36,36 @@ class PrintServerPanel extends StatefulWidget {
 }
 
 class _PrintServerPanelState extends State<PrintServerPanel> {
-  PrinterManager? get _m => widget.manager;
+  static const _usbLaunchChannel = MethodChannel(
+    'lk.posex.posex_app/usb_launch',
+  );
+  late Future<bool> _usbAutoLaunchEnabled;
 
   @override
   void initState() {
     super.initState();
-    unawaited(requestPrintPermissions());
+    _usbAutoLaunchEnabled = _readUsbAutoLaunch();
   }
+
+  Future<bool> _readUsbAutoLaunch() async {
+    if (!Platform.isAndroid) return false;
+    return await _usbLaunchChannel.invokeMethod<bool>('isEnabled') ?? false;
+  }
+
+  Future<void> _setUsbAutoLaunch(bool enabled) async {
+    try {
+      await _usbLaunchChannel.invokeMethod<void>('setEnabled', {
+        'enabled': enabled,
+      });
+      if (mounted) {
+        setState(() => _usbAutoLaunchEnabled = Future.value(enabled));
+      }
+    } catch (_) {
+      await _toast('Could not change USB auto-launch');
+    }
+  }
+
+  PrinterManager? get _m => widget.manager;
 
   String _newId() => DateTime.now().microsecondsSinceEpoch.toString();
 
@@ -70,8 +93,10 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _card,
-        title: const Text('Switch PosEx site?',
-            style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Switch PosEx site?',
+          style: TextStyle(color: Colors.white),
+        ),
         content: Text(
           'Switch to ${PosexEnvironment.labelFor(env)}?\n\n'
           'This clears saved login and offline web data, then loads the selected site. '
@@ -85,8 +110,10 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Clear & switch',
-                style: TextStyle(color: _accent)),
+            child: const Text(
+              'Clear & switch',
+              style: TextStyle(color: _accent),
+            ),
           ),
         ],
       ),
@@ -138,11 +165,34 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                     const SizedBox(height: 16),
                     _statusCard(),
                     const SizedBox(height: 16),
-                    const Text('Printers',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700)),
+                    if (Platform.isAndroid) ...[
+                      FutureBuilder<bool>(
+                        future: _usbAutoLaunchEnabled,
+                        builder: (context, snapshot) => SwitchListTile(
+                          title: const Text(
+                            'USB printer host auto-launch',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          subtitle: const Text(
+                            'Open PosEx when a USB device is attached. Enable only on a dedicated printer host.',
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                          value: snapshot.data ?? false,
+                          onChanged: snapshot.hasData
+                              ? _setUsbAutoLaunch
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
+                    const Text(
+                      'Printers',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -172,8 +222,10 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                     if (manager.printers.isEmpty)
                       Padding(
                         padding: const EdgeInsets.symmetric(vertical: 24),
-                        child: Text('No printers yet. $printPanelPlatformHint',
-                            style: const TextStyle(color: Colors.white54)),
+                        child: Text(
+                          'No printers yet. $printPanelPlatformHint',
+                          style: const TextStyle(color: Colors.white54),
+                        ),
                       )
                     else
                       ...manager.printers.map(_printerTile),
@@ -196,11 +248,14 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('PosEx site',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700)),
+          const Text(
+            'PosEx site',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           const SizedBox(height: 4),
           const Text(
             'Changing site clears login / offline web data and reloads.',
@@ -233,7 +288,9 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: selected ? null : () => unawaited(_confirmSwitchEnvironment(value)),
+        onTap: selected
+            ? null
+            : () => unawaited(_confirmSwitchEnvironment(value)),
         borderRadius: BorderRadius.circular(10),
         child: Container(
           margin: const EdgeInsets.only(top: 8),
@@ -241,9 +298,7 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
           decoration: BoxDecoration(
             color: selected ? _accent.withValues(alpha: 0.18) : Colors.black26,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: selected ? _accent : Colors.white12,
-            ),
+            border: Border.all(color: selected ? _accent : Colors.white12),
           ),
           child: Row(
             children: [
@@ -257,13 +312,22 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                        )),
-                    Text(subtitle,
-                        style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: selected
+                            ? FontWeight.w700
+                            : FontWeight.w500,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -282,22 +346,31 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
         color: _card,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-            color: running ? _accent.withValues(alpha: 0.4) : Colors.white24),
+          color: running ? _accent.withValues(alpha: 0.4) : Colors.white24,
+        ),
       ),
       child: Row(
         children: [
-          Icon(running ? Icons.check_circle : Icons.error,
-              color: running ? Colors.green : Colors.red),
+          Icon(
+            running ? Icons.check_circle : Icons.error,
+            color: running ? Colors.green : Colors.red,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(running ? 'Server running' : 'Server stopped',
-                    style: const TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.w700)),
-                Text('localhost:${PrintHttpServer.port}',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                Text(
+                  running ? 'Server running' : 'Server stopped',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  'localhost:${PrintHttpServer.port}',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
               ],
             ),
           ),
@@ -327,21 +400,31 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
             children: [
               Padding(
                 padding: const EdgeInsets.only(top: 2),
-                child: Icon(online ? Icons.circle : Icons.circle_outlined,
-                    size: 12, color: online ? Colors.green : Colors.white38),
+                child: Icon(
+                  online ? Icons.circle : Icons.circle_outlined,
+                  size: 12,
+                  color: online ? Colors.green : Colors.white38,
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(p.name,
-                        style: const TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.w600)),
+                    Text(
+                      p.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       '${p.transport.label} · ${p.address}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
@@ -350,8 +433,11 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                icon: const Icon(Icons.delete_outline,
-                    color: Colors.redAccent, size: 20),
+                icon: const Icon(
+                  Icons.delete_outline,
+                  color: Colors.redAccent,
+                  size: 20,
+                ),
                 onPressed: () => manager.removePrinter(p.id),
               ),
             ],
@@ -367,8 +453,9 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                 onSelected: (_) => manager.setDefaultPos(p.id),
                 selectedColor: _accent,
                 labelStyle: TextStyle(
-                    color: isDefaultPos ? Colors.white : Colors.white70,
-                    fontSize: 12),
+                  color: isDefaultPos ? Colors.white : Colors.white70,
+                  fontSize: 12,
+                ),
                 backgroundColor: Colors.black26,
               ),
               ChoiceChip(
@@ -377,8 +464,9 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                 onSelected: (_) => manager.setDefaultBarcode(p.id),
                 selectedColor: _accent,
                 labelStyle: TextStyle(
-                    color: isDefaultBarcode ? Colors.white : Colors.white70,
-                    fontSize: 12),
+                  color: isDefaultBarcode ? Colors.white : Colors.white70,
+                  fontSize: 12,
+                ),
                 backgroundColor: Colors.black26,
               ),
               TextButton(
@@ -386,8 +474,10 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
                   final err = await manager.sendTo(p, _testTicket());
                   await _toast(err == null ? 'Test sent' : 'Failed: $err');
                 },
-                child: const Text('Test print',
-                    style: TextStyle(color: _accent, fontSize: 12)),
+                child: const Text(
+                  'Test print',
+                  style: TextStyle(color: _accent, fontSize: 12),
+                ),
               ),
             ],
           ),
@@ -407,8 +497,10 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
           backgroundColor: _card,
-          title: const Text('Add network printer',
-              style: TextStyle(color: Colors.white)),
+          title: const Text(
+            'Add network printer',
+            style: TextStyle(color: Colors.white),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -418,8 +510,10 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
               SwitchListTile(
                 value: isBarcode,
                 onChanged: (v) => setLocal(() => isBarcode = v),
-                title: const Text('Barcode / label printer',
-                    style: TextStyle(color: Colors.white70, fontSize: 13)),
+                title: const Text(
+                  'Barcode / label printer',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
                 activeThumbColor: _accent,
                 contentPadding: EdgeInsets.zero,
               ),
@@ -427,11 +521,13 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('Cancel')),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
             TextButton(
-                onPressed: () => Navigator.pop(ctx, true),
-                child: const Text('Add', style: TextStyle(color: _accent))),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Add', style: TextStyle(color: _accent)),
+            ),
           ],
         ),
       ),
@@ -439,13 +535,17 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
 
     if (ok == true && ipCtrl.text.trim().isNotEmpty) {
       final port = portCtrl.text.trim().isEmpty ? '9100' : portCtrl.text.trim();
-      await _m!.addPrinter(PrinterConfig(
-        id: _newId(),
-        name: nameCtrl.text.trim().isEmpty ? 'Network printer' : nameCtrl.text.trim(),
-        transport: PrinterTransport.network,
-        address: '${ipCtrl.text.trim()}:$port',
-        isBarcode: isBarcode,
-      ));
+      await _m!.addPrinter(
+        PrinterConfig(
+          id: _newId(),
+          name: nameCtrl.text.trim().isEmpty
+              ? 'Network printer'
+              : nameCtrl.text.trim(),
+          transport: PrinterTransport.network,
+          address: '${ipCtrl.text.trim()}:$port',
+          isBarcode: isBarcode,
+        ),
+      );
     }
   }
 
@@ -457,7 +557,9 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
     final devices = await PrintBluetoothThermal.pairedBluetooths;
     if (!mounted) return;
     if (devices.isEmpty) {
-      await _toast('No paired Bluetooth printers. Pair it in Android settings first.');
+      await _toast(
+        'No paired Bluetooth printers. Pair it in Android settings first.',
+      );
       return;
     }
 
@@ -465,28 +567,38 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _card,
-        title: const Text('Paired Bluetooth printers',
-            style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'Paired Bluetooth printers',
+          style: TextStyle(color: Colors.white),
+        ),
         content: SizedBox(
           width: double.maxFinite,
           child: ListView(
             shrinkWrap: true,
             children: devices
-                .map((d) => ListTile(
-                      title: Text(d.name,
-                          style: const TextStyle(color: Colors.white)),
-                      subtitle: Text(d.macAdress,
-                          style: const TextStyle(color: Colors.white54)),
-                      onTap: () async {
-                        Navigator.pop(ctx);
-                        await _m!.addPrinter(PrinterConfig(
+                .map(
+                  (d) => ListTile(
+                    title: Text(
+                      d.name,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    subtitle: Text(
+                      d.macAdress,
+                      style: const TextStyle(color: Colors.white54),
+                    ),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await _m!.addPrinter(
+                        PrinterConfig(
                           id: _newId(),
                           name: d.name.isEmpty ? 'Bluetooth printer' : d.name,
                           transport: PrinterTransport.bluetooth,
                           address: d.macAdress,
-                        ));
-                      },
-                    ))
+                        ),
+                      );
+                    },
+                  ),
+                )
                 .toList(),
           ),
         ),
@@ -510,30 +622,40 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _card,
-        title:
-            const Text('USB printers', style: TextStyle(color: Colors.white)),
+        title: const Text(
+          'USB printers',
+          style: TextStyle(color: Colors.white),
+        ),
         content: SizedBox(
           width: double.maxFinite,
           child: ListView(
             shrinkWrap: true,
             children: devices
-                .map((d) => ListTile(
-                      title: Text(d.name ?? 'USB printer',
-                          style: const TextStyle(color: Colors.white)),
-                      subtitle: Text(usbAddress(d),
-                          style: const TextStyle(color: Colors.white54)),
-                      onTap: () async {
-                        Navigator.pop(ctx);
-                        await _m!.addPrinter(PrinterConfig(
+                .map(
+                  (d) => ListTile(
+                    title: Text(
+                      d.name ?? 'USB printer',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    subtitle: Text(
+                      usbAddress(d),
+                      style: const TextStyle(color: Colors.white54),
+                    ),
+                    onTap: () async {
+                      Navigator.pop(ctx);
+                      await _m!.addPrinter(
+                        PrinterConfig(
                           id: _newId(),
                           name: (d.name == null || d.name!.isEmpty)
                               ? 'USB printer'
                               : d.name!,
                           transport: PrinterTransport.usb,
                           address: usbAddress(d),
-                        ));
-                      },
-                    ))
+                        ),
+                      );
+                    },
+                  ),
+                )
                 .toList(),
           ),
         ),
@@ -559,8 +681,11 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
     );
   }
 
-  Widget _field(TextEditingController c, String label,
-      {TextInputType? keyboardType}) {
+  Widget _field(
+    TextEditingController c,
+    String label, {
+    TextInputType? keyboardType,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: TextField(
@@ -571,9 +696,11 @@ class _PrintServerPanelState extends State<PrintServerPanel> {
           labelText: label,
           labelStyle: const TextStyle(color: Colors.white54),
           enabledBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(color: Colors.white24)),
+            borderSide: BorderSide(color: Colors.white24),
+          ),
           focusedBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(color: _accent)),
+            borderSide: BorderSide(color: _accent),
+          ),
         ),
       ),
     );

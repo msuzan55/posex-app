@@ -41,6 +41,19 @@ flutter analyze
 
 - **Android:** signed release APK
 - **Windows:** `posex-app-windows.zip` (portable release folder)
+- **Windows installer:** `PosEx-Setup.exe`
+
+To display a verified Windows publisher, obtain a trusted code-signing certificate
+for the PosEx publisher and add GitHub Actions secrets
+`POSEX_WINDOWS_PFX_BASE64` (base64 of the PFX file) and
+`POSEX_WINDOWS_PFX_PASSWORD`. CI signs both `posex_app.exe` and
+`PosEx-Setup.exe` when these secrets are present. Without them the build
+remains unsigned and Windows can show an unknown-publisher warning. A signed
+new app may still receive a SmartScreen reputation prompt initially.
+
+On Android, the print server listens only on localhost. Settings contains an
+opt-in **USB printer host auto-launch** switch for dedicated printer devices.
+It is off by default so attaching USB hardware does not open the app.
 
 Both are attached to the GitHub Release `build-{run_number}` for in-app updates.
 

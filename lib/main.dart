@@ -437,7 +437,7 @@ class _WebViewScreenState extends State<WebViewScreen> with WidgetsBindingObserv
       _attachPrinterManagerListener(manager);
 
       if (!Platform.isWindows) {
-        _probeTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
+        _probeTimer = Timer.periodic(const Duration(seconds: 45), (_) async {
           await manager.reconnectAll();
           await _syncPrintForegroundService();
         });

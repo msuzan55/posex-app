@@ -105,6 +105,8 @@ jobs:
   build-windows:
     name: Build Windows app
     runs-on: windows-latest
+    env:
+      POSEX_WINDOWS_PFX_BASE64: ${{ secrets.POSEX_WINDOWS_PFX_BASE64 }}
     steps:
       - uses: actions/checkout@v5
 
@@ -156,6 +158,21 @@ jobs:
           Copy-Item install\redist\vc_redist.x64.exe `
             build\windows\x64\runner\Release\vc_redist.x64.exe -Force
 
+      - name: Sign Windows app
+        if: env.POSEX_WINDOWS_PFX_BASE64 != ''
+        env:
+          POSEX_WINDOWS_PFX_BASE64: ${{ secrets.POSEX_WINDOWS_PFX_BASE64 }}
+          POSEX_WINDOWS_PFX_PASSWORD: ${{ secrets.POSEX_WINDOWS_PFX_PASSWORD }}
+        shell: pwsh
+        run: |
+          $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $sdk) { throw 'Windows SDK signtool.exe was not found' }
+          $cert = Join-Path $env:RUNNER_TEMP 'posex-signing.pfx'
+          [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env:POSEX_WINDOWS_PFX_BASE64))
+          & $sdk.FullName sign /f $cert /p $env:POSEX_WINDOWS_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 build\windows\x64\runner\Release\posex_app.exe
+          if ($LASTEXITCODE -ne 0) { throw 'App signing failed' }
+          Remove-Item -LiteralPath $cert
+
       - name: Zip portable Windows release (for in-app OTA)
         shell: pwsh
         run: |
@@ -179,6 +196,21 @@ jobs:
           & $iscc install\posex_installer.iss `
             "/DAppVersion=1.0.${{ github.run_number }}" `
             "/DReleaseDir=$PWD\build\windows\x64\runner\Release"
+
+      - name: Sign Windows installer
+        if: env.POSEX_WINDOWS_PFX_BASE64 != ''
+        env:
+          POSEX_WINDOWS_PFX_BASE64: ${{ secrets.POSEX_WINDOWS_PFX_BASE64 }}
+          POSEX_WINDOWS_PFX_PASSWORD: ${{ secrets.POSEX_WINDOWS_PFX_PASSWORD }}
+        shell: pwsh
+        run: |
+          $sdk = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $sdk) { throw 'Windows SDK signtool.exe was not found' }
+          $cert = Join-Path $env:RUNNER_TEMP 'posex-signing.pfx'
+          [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env:POSEX_WINDOWS_PFX_BASE64))
+          & $sdk.FullName sign /f $cert /p $env:POSEX_WINDOWS_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 build\installer\PosEx-Setup.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Installer signing failed' }
+          Remove-Item -LiteralPath $cert
 
       - name: Stage Windows release files
         shell: pwsh

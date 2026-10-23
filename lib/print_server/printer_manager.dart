@@ -27,6 +27,7 @@ class PrinterManager extends ChangeNotifier {
   String? _btConnectedMac;
 
   final UsbPrinterService _usb = UsbPrinterService();
+  bool _reconnecting = false;
 
   List<PrinterConfig> get printers => List.unmodifiable(_printers);
   String? get defaultPosId => _defaultPosId;
@@ -61,15 +62,19 @@ class PrinterManager extends ChangeNotifier {
   }
 
   Future<void> reconnectAll() async {
+    if (_reconnecting || _printers.isEmpty) return;
+    _reconnecting = true;
     var changed = false;
-    for (final p in _printers) {
-      final before = _online[p.id];
-      final now = await _probe(p);
-      _online[p.id] = now;
-      if (before != now) changed = true;
-    }
-    if (changed) {
-      notifyListeners();
+    try {
+      for (final p in _printers) {
+        final before = _online[p.id];
+        final now = await _probe(p);
+        _online[p.id] = now;
+        if (before != now) changed = true;
+      }
+      if (changed) notifyListeners();
+    } finally {
+      _reconnecting = false;
     }
   }
 
@@ -120,8 +125,11 @@ class PrinterManager extends ChangeNotifier {
     final pos = _byId(_defaultPosId);
     final barcode = _byId(_defaultBarcodeId);
     final posOnline =
-        _defaultPosId != null && _defaultPosId!.isNotEmpty && isOnline(_defaultPosId!);
-    final barcodeOnline = _defaultBarcodeId != null &&
+        _defaultPosId != null &&
+        _defaultPosId!.isNotEmpty &&
+        isOnline(_defaultPosId!);
+    final barcodeOnline =
+        _defaultBarcodeId != null &&
         _defaultBarcodeId!.isNotEmpty &&
         isOnline(_defaultBarcodeId!);
     return {
@@ -136,8 +144,12 @@ class PrinterManager extends ChangeNotifier {
 
   /// Send raw bytes to the default printer for the given role.
   /// Returns null on success, or an error message.
-  Future<String?> sendToRole({required bool barcode, required List<int> bytes}) async {
-    final printer = _byId(barcode ? _defaultBarcodeId : _defaultPosId) ??
+  Future<String?> sendToRole({
+    required bool barcode,
+    required List<int> bytes,
+  }) async {
+    final printer =
+        _byId(barcode ? _defaultBarcodeId : _defaultPosId) ??
         // Fall back to POS printer for cash-drawer / when no barcode set.
         _byId(_defaultPosId);
     if (printer == null) {
@@ -220,20 +232,23 @@ class PrinterManager extends ChangeNotifier {
       switch (printer.transport) {
         case PrinterTransport.network:
           final hp = _hostPort(printer.address);
-          final s = await Socket.connect(hp.host, hp.port,
-              timeout: const Duration(seconds: 3));
+          final s = await Socket.connect(
+            hp.host,
+            hp.port,
+            timeout: const Duration(seconds: 3),
+          );
           s.destroy();
           return true;
         case PrinterTransport.bluetooth:
           if (!Platform.isAndroid) return false;
-          return _ensureBluetooth(printer.address);
+          return await _ensureBluetooth(printer.address);
         case PrinterTransport.usb:
           if (Platform.isWindows) {
             // USB scan uses native printer APIs — run only when sending, not at startup.
             return false;
           }
           final vp = _vendorProduct(printer.address);
-          return _usb.isPresent(vp.vendor, vp.product);
+          return await _usb.isPresent(vp.vendor, vp.product);
       }
     } catch (_) {
       return false;

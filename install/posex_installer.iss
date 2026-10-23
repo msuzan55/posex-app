@@ -33,7 +33,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: checkedonce
-Name: "startup"; Description: "Start PosEx when Windows starts"; GroupDescription: "Startup:"; Flags: checkedonce
 
 [Files]
 Source: "{#ReleaseDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -44,16 +43,31 @@ Source: "redist\vc_redist.x64.exe"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"
 Name: "{autoprograms}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"
 Name: "{autodesktop}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"; Tasks: desktopicon
-Name: "{userstartup}\PosEx"; Filename: "{app}\launch_posex.cmd"; IconFilename: "{app}\posex_app.exe"; Tasks: startup
-
-[Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "PosEx"; ValueData: """{app}\launch_posex.cmd"""; Tasks: startup; Flags: uninsdeletevalue
+[InstallDelete]
+; Older installers created a second startup shortcut. The app owns its one
+; start-on-login setting through launch_at_startup.
+Type: files; Name: "{userstartup}\PosEx.lnk"
 
 [Run]
 Filename: "{app}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Microsoft Visual C++ Runtime..."; Check: VCRedistNeedsInstall; Flags: waituntilterminated
 Filename: "{app}\launch_posex.cmd"; Description: "Launch PosEx"; Flags: nowait postinstall skipifsilent
 
 [Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  StartupCommand: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run',
+      'PosEx', StartupCommand) then
+    begin
+      if Pos('launch_posex.cmd', Lowercase(StartupCommand)) > 0 then
+        RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'PosEx');
+    end;
+  end;
+end;
+
 function VCRedistNeedsInstall: Boolean;
 var
   Installed: Cardinal;

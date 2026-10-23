@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ActivityNotFoundException
 import android.content.ContentValues
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaScannerConnection
@@ -29,6 +30,7 @@ class MainActivity : FlutterActivity() {
         private const val INSTALL_CHANNEL = "lk.posex.posex_app/apk_install"
         private const val FILE_CHANNEL = "lk.posex.posex_app/file_actions"
         private const val PUSH_CHANNEL = "lk.posex.posex_app/grouped_push"
+        private const val USB_LAUNCH_CHANNEL = "lk.posex.posex_app/usb_launch"
 
         private const val DOWNLOAD_CHANNEL_ID = "posex_downloads"
         private const val DOWNLOAD_NOTIFICATION_BASE = 9200
@@ -114,6 +116,28 @@ class MainActivity : FlutterActivity() {
                 }
             }
         deliverPendingPushOpen()
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, USB_LAUNCH_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                val component = ComponentName(this, "$packageName.UsbPrinterLaunchActivity")
+                when (call.method) {
+                    "isEnabled" -> result.success(
+                        packageManager.getComponentEnabledSetting(component) ==
+                            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    )
+                    "setEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        packageManager.setComponentEnabledSetting(
+                            component,
+                            if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                            else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                            PackageManager.DONT_KILL_APP,
+                        )
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, PRINT_CHANNEL)
             .setMethodCallHandler { call, result ->

@@ -8,7 +8,6 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:http/http.dart' as http;
 
 import '../platform/app_diagnostics.dart';
-import '../platform/app_permissions.dart';
 import '../platform/native_file_bridge.dart';
 import '../platform/windows_startup.dart';
 
@@ -40,7 +39,6 @@ class PosexWebViewController {
   bool _canGoBack = false;
   bool _ready = false;
   bool _pageLoaded = false;
-  bool _firstDocumentReady = false;
   String? _initialUrl;
 
   bool get isReady => _ready;
@@ -105,13 +103,6 @@ class PosexWebViewController {
       initialUrlRequest: URLRequest(url: WebUri(_initialUrl!)),
       initialSettings: InAppWebViewSettings(
         javaScriptEnabled: true,
-        domStorageEnabled: true,
-        databaseEnabled: true,
-        cacheEnabled: true,
-        thirdPartyCookiesEnabled: true,
-        incognito: false,
-        mixedContentMode: MixedContentMode.MIXED_CONTENT_COMPATIBILITY_MODE,
-        geolocationEnabled: true,
         mediaPlaybackRequiresUserGesture: false,
         allowsInlineMediaPlayback: true,
         supportZoom: false,
@@ -124,9 +115,6 @@ class PosexWebViewController {
         useShouldOverrideUrlLoading: true,
         useOnLoadResource: false,
         useOnDownloadStart: Platform.isAndroid,
-        iframeAllow:
-            'camera; microphone; display-capture; clipboard-read; clipboard-write',
-        iframeAllowFullscreen: true,
       ),
       shouldOverrideUrlLoading: (controller, action) async {
         final url = action.request.url?.toString() ?? '';
@@ -254,13 +242,9 @@ class PosexWebViewController {
         }
       },
       onLoadStart: (controller, url) {
-        unawaited(AppDiagnostics.log('INFO', 'WebView load start: $url'));
-        // After the POS has painted once, do not cover it again. SW reloads,
-        // SPA navigations, and auth redirects used to put a full-screen
-        // Flutter spinner on top of a working page (looked "stuck").
-        if (_firstDocumentReady) return;
         _pageLoaded = false;
         onLoadingChanged(true);
+        unawaited(AppDiagnostics.log('INFO', 'WebView load start: $url'));
       },
       onLoadStop: (controller, url) {
         unawaited(AppDiagnostics.log('INFO', 'WebView load stop: $url'));
@@ -287,9 +271,6 @@ class PosexWebViewController {
         }
       },
       onPermissionRequest: (controller, request) async {
-        if (Platform.isAndroid) {
-          await requestMediaPermissions();
-        }
         return PermissionResponse(
           resources: request.resources,
           action: PermissionResponseAction.GRANT,
@@ -306,7 +287,6 @@ class PosexWebViewController {
   void _markPageLoaded() {
     if (_pageLoaded) return;
     _pageLoaded = true;
-    _firstDocumentReady = true;
     onLoadingChanged(false);
     unawaited(_refreshCanGoBack());
     onPageFinished();
@@ -357,7 +337,6 @@ class PosexWebViewController {
     _ready = false;
     _initialUrl = null;
     _pageLoaded = false;
-    _firstDocumentReady = false;
   }
 
   static Map<String, dynamic> _firstArgMap(List<dynamic> args) {
@@ -417,42 +396,6 @@ class PosexWebViewController {
   document.documentElement.classList.add('posex-native-app');
   document.documentElement.style.setProperty('--safe-top', '0px');
   document.documentElement.style.setProperty('--safe-bottom', '0px');
-  // Android WebView + PWA service worker: first-install controllerchange
-  // reloads the page under a Flutter spinner and looks frozen. Chrome does
-  // not have that shell. Native FCM replaces web push; HTTP cache is enough.
-  try {
-    if (navigator.serviceWorker) {
-      var dummyReg = {
-        installing: null,
-        waiting: null,
-        active: null,
-        scope: '/',
-        update: function(){ return Promise.resolve(this); },
-        unregister: function(){ return Promise.resolve(true); },
-        addEventListener: function(){},
-        removeEventListener: function(){}
-      };
-      var origAdd = navigator.serviceWorker.addEventListener.bind(navigator.serviceWorker);
-      navigator.serviceWorker.addEventListener = function(type, listener, options) {
-        if (String(type) === 'controllerchange') return;
-        return origAdd(type, listener, options);
-      };
-      navigator.serviceWorker.register = function() {
-        return Promise.resolve(dummyReg);
-      };
-      try {
-        Object.defineProperty(navigator.serviceWorker, 'ready', {
-          configurable: true,
-          get: function(){ return Promise.resolve(dummyReg); }
-        });
-      } catch (e2) {}
-      navigator.serviceWorker.getRegistrations().then(function(rs) {
-        for (var i = 0; i < rs.length; i++) {
-          try { rs[i].unregister(); } catch (e) {}
-        }
-      });
-    }
-  } catch (e) {}
   window.PosExNativeBridge = window.PosExNativeBridge || {};
   if (!window.PosExNativeBridge.postMessage) {
     window.PosExNativeBridge.postMessage = function(m){
